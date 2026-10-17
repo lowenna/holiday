@@ -1,13 +1,11 @@
-//#include <Arduino.h>
 #include <WiFiManager.h>
 #include <Preferences.h>
 #include <time.h>
-//#include "NTPClient.h"
 
 
 // Custom settings for next holiday when not setup at all.
 // If already in NVR, overwritten by that.
-// I think can clear with prefs.begin(); prefs.remove("hol"); prefs.end();  Haven't tested
+// Think can clear with prefs.begin(); prefs.remove("hol"); prefs.end();  Haven't tested
 char gHour[3] = "10";
 char gDay[3] = "5";
 char gMonth[3] = "12";
@@ -22,7 +20,6 @@ bool shouldSaveConfig = false;
 Preferences prefs;
 
 // For NTP
-//NTPClient n = NTPClient("pool.ntp.org", 0);
 const char* MY_TZ = "GMT0BST,M3.5.0/1,M10.5.0";  
 
 // Wifimanager callback notifying us of the need to save config
@@ -41,7 +38,7 @@ bool areWeConfiguring() {
     if (0 == digitalRead(0)) pressed = true;
     delay(1000);
     Serial.printf("%d %d\n", millis()-startAt, pressed); 
-  } while ((millis() - startAt < 2000) &(!pressed));
+  } while ((millis() - startAt < 5000) &(!pressed));
   return pressed;
 }
 
@@ -76,8 +73,6 @@ void writePreferences(String hour, String day, String month, String year, String
   prefs.end();
 }
 
-
-
 void setup()
 {
   Serial.begin(115200);
@@ -95,14 +90,13 @@ void setup()
   WiFiManagerParameter custom_hol_where("where", "Where", gWhere, 20);
   WiFiManagerParameter custom_hol_who("who", "Who", gWho, 20);
 
-  // WiFiManager
   // Local intialization. Once its business is done, there is no need to keep it around
   WiFiManager wifiManager;
 
   // set config save notify callback
   wifiManager.setSaveConfigCallback(saveConfigCallback);
 
-  // add all your parameters here
+  // custom parameters
   wifiManager.addParameter(&custom_hol_hour);
   wifiManager.addParameter(&custom_hol_day);
   wifiManager.addParameter(&custom_hol_month);
@@ -126,9 +120,6 @@ void setup()
     delay(5000);
   }
 
-  // if you get here you have connected to the WiFi
-  Serial.println("Connected to WiFi!");
-
   // read updated parameters
   String hour =  custom_hol_hour.getValue();
   String day =  custom_hol_day.getValue();
@@ -143,18 +134,17 @@ void setup()
   // NTP
   configTzTime(MY_TZ, "pool.ntp.org");
   
-  Serial.println("setup() complete");
-  
+  Serial.println("setup() complete");  
 }
 
 void loop()
 {
-
   struct tm timeinfo;
   if (!getLocalTime(&timeinfo)) {
    Serial.println("Failed to get localtime!");
   } 
 
+  // Build a struct tm containing date/time when going on holiday
   struct tm holtimeinfo;
   memset(&holtimeinfo,0,sizeof(struct tm));
   holtimeinfo.tm_hour=atoi(gHour);
@@ -163,17 +153,24 @@ void loop()
   holtimeinfo.tm_year=atoi(gYear)-1900; 
   holtimeinfo.tm_isdst=-1;
 
-  time_t rawlocal = mktime(&timeinfo); //1792242810 when developing in oct 2026
+  // Convert our struct tms to time_t. Can you ctime() on these to print if necessary
+  time_t rawlocal = mktime(&timeinfo); 
   time_t rawhol = mktime(&holtimeinfo);
+
+  // Now time_t raw* can be subtracted to get seconds between
   double diff_secs = difftime(rawhol, rawlocal);
+
+  // Now a question of getting days, hours, mins and remaining seconds
   int diffDays = int(diff_secs / 86400);
   diff_secs -=  (double) diffDays*86400;
   int diffHours = int(diff_secs / 3600);
   diff_secs -= (double) diffHours*3600;
   int diffMins = int(diff_secs / 60);
   diff_secs -= (double) diffMins*60;
+
+  // Debug but can go to screen.
   Serial.printf("%s are going to %s in %d Days %02d Hours %02d Minutes %02d Seconds 🌞\n", gWho, gWhere, diffDays, diffHours, diffMins, int(diff_secs) );
 
-
+  // And around we go again
   delay(5000);
 }
