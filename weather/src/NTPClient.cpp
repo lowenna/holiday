@@ -20,6 +20,8 @@
  */
 
 #include "NTPClient.h"
+#define DEBUG_NTPClient 1
+
 
 NTPClient::NTPClient(int timeOffset) {
   this->_timeOffset     = timeOffset;
@@ -49,6 +51,7 @@ void NTPClient::begin() {
   this->_udp.begin(this->_port);
   this->forceUpdate();
 }
+
 
 void NTPClient::forceUpdate() {
   #ifdef DEBUG_NTPClient

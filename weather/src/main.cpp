@@ -1,92 +1,99 @@
-#include <FS.h>
-#include <Arduino.h>
-#include "TimeClient.h"
-#include <WiFi.h>
+//#include <Arduino.h>
 #include <WiFiManager.h>
-#include <SPIFFS.h>
-// From example for saving additional parameters in wifimanager
-#include <ArduinoJson.h> //https://github.com/bblanchon/ArduinoJson
+#include <Preferences.h>
+#include <time.h>
+//#include "NTPClient.h"
 
-// define your default values here, if there are different values in config.json, they are overwritten.
-char hol_day[3] = "5";
-char hol_month[3] = "12";
-char hol_year[5] = "2026";
-char hol_who[21] = "Sandra & John";
-char hol_where[21] = "Maldives";
 
-// flag for saving data
+// Custom settings for next holiday when not setup at all.
+// If already in NVR, overwritten by that.
+// I think can clear with prefs.begin(); prefs.remove("hol"); prefs.end();  Haven't tested
+char gHour[3] = "10";
+char gDay[3] = "5";
+char gMonth[3] = "12";
+char gYear[5] = "2026";
+char gWho[21] = "Sandra & John";
+char gWhere[21] = "Maldives";
+
+// Callback from Wifimanager sets this flag to indicate data needs to be saved
 bool shouldSaveConfig = false;
-TimeClient tc((float)0);
+
+// Preferences from NVR
+Preferences prefs;
+
+// For NTP
+//NTPClient n = NTPClient("pool.ntp.org", 0);
+const char* MY_TZ = "GMT0BST,M3.5.0/1,M10.5.0";  
 
 // Wifimanager callback notifying us of the need to save config
 void saveConfigCallback()
 {
+  prefs.remove("hol");
   Serial.println("Should save config");
   shouldSaveConfig = true;
 }
 
+bool areWeConfiguring() {
+  unsigned long startAt = millis();
+  bool pressed = false; 
+  Serial.println("5 sec countdown. Press outside button for 1 second to configure");
+  do {
+    if (0 == digitalRead(0)) pressed = true;
+    delay(1000);
+    Serial.printf("%d %d\n", millis()-startAt, pressed); 
+  } while ((millis() - startAt < 2000) &(!pressed));
+  return pressed;
+}
+
+void readPreferences() {
+  prefs.begin("hol",true);
+  String lHour = prefs.getString("hour","");
+  String lDay = prefs.getString("day","");
+  String lMonth = prefs.getString("month","");
+  String lYear = prefs.getString("year","");
+  String lWho = prefs.getString("who","");
+  String lWhere = prefs.getString("where","");
+  prefs.end();
+
+  if ((lHour.length() > 0) && (strcmp(lHour.c_str(), gHour))) strcpy(gHour, lHour.c_str());
+  if ((lDay.length() > 0) && (strcmp(lDay.c_str(), gDay))) strcpy(gDay, lDay.c_str());
+  if ((lMonth.length() > 0) && (strcmp(lMonth.c_str(), gMonth))) strcpy(gMonth, lMonth.c_str());
+  if ((lYear.length() > 0) && (strcmp(lYear.c_str(), gYear))) strcpy(gYear, lYear.c_str());
+  if ((lWho.length() > 0) && (strcmp(lWho.c_str(), gWho))) strcpy(gWho, lWho.c_str());
+  if ((lWhere.length() > 0) && (strcmp(lWhere.c_str(), gWhere))) strcpy(gWhere,lWhere.c_str());   
+
+  Serial.printf("Pref: At %02s:00 on %02s/%02s/%04s %s are going to %s\n", gHour, gDay, gMonth, gYear, gWho, gWhere);
+}
+
+void writePreferences(String hour, String day, String month, String year, String who, String where) {
+  prefs.begin("hol", false);
+  prefs.putString("hour", hour);
+  prefs.putString("day", day);
+  prefs.putString("month", month);
+  prefs.putString("year", year);
+  prefs.putString("who", who);
+  prefs.putString("where", where);
+  prefs.end();
+}
+
+
+
 void setup()
 {
-
   Serial.begin(115200);
   while (!Serial)
     continue;
 
-  // read configuration from FS json
-  Serial.println("mounting FS...");
+  bool configuring = areWeConfiguring();
 
-  if (SPIFFS.begin())
-  {
-    Serial.println("mounted file system");
-    if (SPIFFS.exists("/config.json"))
-    {
-      // file exists, reading and loading
-      Serial.println("reading config file");
-      File configFile = SPIFFS.open("/config.json", "r");
-      if (configFile)
-      {
-        Serial.println("opened config file");
-        size_t size = configFile.size();
-        // Allocate a buffer to store contents of the file.
-        std::unique_ptr<char[]> buf(new char[size]);
+  readPreferences() ;
 
-        configFile.readBytes(buf.get(), size);
-
-        //JsonDocument json(1024);
-        JsonDocument json;
-        auto deserializeError = deserializeJson(json, buf.get());
-        serializeJson(json, Serial);
-        if (!deserializeError)
-        {
-          Serial.println("\nparsed json");
-          strcpy(hol_day, json["hol_day"]);
-          strcpy(hol_month, json["hol_month"]);
-          strcpy(hol_year, json["hol_year"]);
-          strcpy(hol_where, json["hol_where"]);
-          strcpy(hol_who, json["hol_who"]);
-        }
-        else
-        {
-          Serial.println("failed to load json config");
-        }
-        configFile.close();
-      }
-    }
-  }
-  else
-  {
-    Serial.println("failed to mount FS");
-  }
-  // end read
-
-  // The extra parameters to be configured (can be either global or just in the setup)
-  // After connecting, parameter.getValue() will get you the configured value
-  // id/name placeholder/prompt default length
-  WiFiManagerParameter custom_hol_day("day", "Day", hol_day, 2);
-  WiFiManagerParameter custom_hol_month("month", "Month", hol_month, 2);
-  WiFiManagerParameter custom_hol_year("year", "Year", hol_year, 4);
-  WiFiManagerParameter custom_hol_where("where", "Where", hol_where, 20);
-  WiFiManagerParameter custom_hol_who("who", "Who", hol_who, 20);
+  WiFiManagerParameter custom_hol_hour("hour", "Hour", gHour, 2);
+  WiFiManagerParameter custom_hol_day("day", "Day", gDay, 2);
+  WiFiManagerParameter custom_hol_month("month", "Month", gMonth, 2);
+  WiFiManagerParameter custom_hol_year("year", "Year", gYear, 4);
+  WiFiManagerParameter custom_hol_where("where", "Where", gWhere, 20);
+  WiFiManagerParameter custom_hol_who("who", "Who", gWho, 20);
 
   // WiFiManager
   // Local intialization. Once its business is done, there is no need to keep it around
@@ -96,13 +103,21 @@ void setup()
   wifiManager.setSaveConfigCallback(saveConfigCallback);
 
   // add all your parameters here
+  wifiManager.addParameter(&custom_hol_hour);
   wifiManager.addParameter(&custom_hol_day);
   wifiManager.addParameter(&custom_hol_month);
   wifiManager.addParameter(&custom_hol_year);
   wifiManager.addParameter(&custom_hol_where);
   wifiManager.addParameter(&custom_hol_who);
 
-  if (!wifiManager.autoConnect())
+  boolean wmResult;
+  if (configuring) {
+    wmResult = wifiManager.startConfigPortal() ;
+  } else {
+    wmResult = wifiManager.autoConnect();
+  }
+
+  if (!wmResult)
   {
     Serial.println("failed to connect and hit timeout");
     delay(3000);
@@ -112,51 +127,53 @@ void setup()
   }
 
   // if you get here you have connected to the WiFi
-  Serial.println("connected...yeey :)");
+  Serial.println("Connected to WiFi!");
 
   // read updated parameters
-  strcpy(hol_day, custom_hol_day.getValue());
-  strcpy(hol_month, custom_hol_month.getValue());
-  strcpy(hol_year, custom_hol_year.getValue());
-  strcpy(hol_who, custom_hol_who.getValue());
-  strcpy(hol_where, custom_hol_where.getValue());
-  Serial.println("The values in the file are: ");
-  Serial.println("\thol_day : " + String(hol_day));
+  String hour =  custom_hol_hour.getValue();
+  String day =  custom_hol_day.getValue();
+  String month = custom_hol_month.getValue();
+  String year = custom_hol_year.getValue();
+  String who = custom_hol_who.getValue();
+  String where = custom_hol_where.getValue();
 
-  // save the custom parameters to FS
-  if (shouldSaveConfig)
-  {
-    Serial.println("saving config");
-    JsonDocument json;//(1024);
-    json["hol_day"] = hol_day;
-    json["hol_month"] = hol_month;
-    json["hol_year"] = hol_year;
-    json["hol_who"] = hol_who;
-    json["hol_where"] = hol_where;
+  // save the custom parameters to NVR
+  if (shouldSaveConfig) writePreferences(hour,day,month,year,who,where);
 
-    File configFile = SPIFFS.open("/config.json", "w");
-    if (!configFile)
-    {
-      Serial.println("failed to open config file for writing");
-    }
-
-    serializeJson(json, Serial);
-    serializeJson(json, configFile);
-    configFile.close();
-    // end save
-
-    // tc.updateTime();
-
-    //   Serial.println("Starting autoConnect");
-    //   wm.autoConnect();
-
-    Serial.println("setup() complete");
-  }
+  // NTP
+  configTzTime(MY_TZ, "pool.ntp.org");
+  
+  Serial.println("setup() complete");
+  
 }
 
-  void loop()
-  {
+void loop()
+{
 
-    Serial.printf("%d\n", digitalRead(0));
-    delay(100);
-  }
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+   Serial.println("Failed to get localtime!");
+  } 
+
+  struct tm holtimeinfo;
+  memset(&holtimeinfo,0,sizeof(struct tm));
+  holtimeinfo.tm_hour=atoi(gHour);
+  holtimeinfo.tm_mday=atoi(gDay);
+  holtimeinfo.tm_mon=atoi(gMonth)-1;
+  holtimeinfo.tm_year=atoi(gYear)-1900; 
+  holtimeinfo.tm_isdst=-1;
+
+  time_t rawlocal = mktime(&timeinfo); //1792242810 when developing in oct 2026
+  time_t rawhol = mktime(&holtimeinfo);
+  double diff_secs = difftime(rawhol, rawlocal);
+  int diffDays = int(diff_secs / 86400);
+  diff_secs -=  (double) diffDays*86400;
+  int diffHours = int(diff_secs / 3600);
+  diff_secs -= (double) diffHours*3600;
+  int diffMins = int(diff_secs / 60);
+  diff_secs -= (double) diffMins*60;
+  Serial.printf("%s are going to %s in %d Days %02d Hours %02d Minutes %02d Seconds 🌞\n", gWho, gWhere, diffDays, diffHours, diffMins, int(diff_secs) );
+
+
+  delay(5000);
+}
