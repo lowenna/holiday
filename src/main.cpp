@@ -32,43 +32,82 @@ const char* MY_TZ = "GMT0BST,M3.5.0/1,M10.5.0";
 
 TFT_eSPI tft = TFT_eSPI();
 
+#define SPRITE_CURSOR_X 4  // Inside the sprite
+#define SPRITE_CURSOR_Y 12
+#define SPRITE_GAP 80 // Between start of left boundary between boxes
+#define SPRITE_Y_TOP 64
+#define SPRITE_WIDTH 70
+#define SPRITE_HEIGHT 72 // With a 48px font height within, so 72-48 = 24. 24/2 (top/bottom), so 12 offset from top
 
-// Create a Sprite object dedicated to the text console
-TFT_eSprite console = TFT_eSprite(&tft);
+void displayTimeLeft(int days, int hours, int mins, int secs ) {
 
-// Tracks the cursor Y position within the sprite
-int consoleY = 0; 
-
-// Custom function to mimic Serial.println on the screen
-void displayConsoleLog(String message) {
-  // Mirror to the actual hardware Serial Monitor for safety
-  Serial.println(message);
-
-  // Move the cursor to our current tracked vertical line
-  console.setCursor(0, consoleY);
+  // Top area
+  tft.setTextColor(TFT_GREEN);
+  tft.drawLine(0,16,319,16,TFT_WHITE);
+  tft.fillRect(0,15,319,15,TFT_BLACK);
+  tft.drawString("Top status stuff here", 0, 0, 2);
   
-  // Print the message to the Sprite buffer
-  console.println(message);
-  
-  // Check if the next string will overflow the bottom of the screen
-  if (consoleY >= CONSOLE_HEIGHT - FONT_HEIGHT) {
-    // Scroll the entire canvas UP by the height of one text line
-    console.scroll(0, -FONT_HEIGHT); 
-    
-    // Keep the cursor pinned to the bottom row
-    consoleY = CONSOLE_HEIGHT - FONT_HEIGHT;
-    
-    // Clear out the trailing leftover artifact line at the very bottom
-    console.fillRect(0, consoleY, CONSOLE_WIDTH, FONT_HEIGHT, TFT_BLACK);
-  } else {
-    // If we haven't hit the bottom yet, just advance down to the next row
-    consoleY += FONT_HEIGHT;
-  }
+  // Bottom area
+  tft.drawLine(0,218,319,218,TFT_WHITE);
+  tft.fillRect(0,219,319,239,TFT_BLACK);
+  tft.drawString("Status stuff will go here",0,221,2);
 
-  // Instantly push the updated buffer to the physical screen
-  console.pushSprite(0, 0);
+  // For text elements
+  TFT_eSprite t = TFT_eSprite(&tft);
+  t.setColorDepth(8);
+  t.setTextDatum(CC_DATUM);
+  t.setTextColor(TFT_WHITE); 
+  t.createSprite(SPRITE_WIDTH, 20); // 2px padding top/bottom for 16px font
+ 
+  t.drawCentreString("Days", SPRITE_WIDTH/2, 0, 2);
+  t.pushSprite(5,SPRITE_Y_TOP+SPRITE_HEIGHT, TFT_BLACK);
+
+  t.fillScreen(TFT_BLACK);
+  t.drawCentreString("Hours", SPRITE_WIDTH/2, 0, 2);
+  t.pushSprite(SPRITE_GAP - SPRITE_WIDTH + SPRITE_GAP - 5,SPRITE_Y_TOP+SPRITE_HEIGHT, TFT_BLACK);
+
+  t.fillScreen(TFT_BLACK);
+  t.drawCentreString("Minutes", SPRITE_WIDTH/2, 0, 2);
+  t.pushSprite(SPRITE_GAP - SPRITE_WIDTH + (SPRITE_GAP*2) - 5,SPRITE_Y_TOP+SPRITE_HEIGHT, TFT_BLACK);
+
+  t.fillScreen(TFT_BLACK);
+  t.drawCentreString("Seconds", SPRITE_WIDTH/2, 0, 2);
+  t.pushSprite(SPRITE_GAP - SPRITE_WIDTH + (SPRITE_GAP*3) - 5,SPRITE_Y_TOP+SPRITE_HEIGHT, TFT_BLACK);
+
+
+  int x = 5;
+  TFT_eSprite s = TFT_eSprite(&tft);
+  s.setColorDepth(8); 
+  s.setTextColor(TFT_WHITE, TFT_DARKCYAN);
+  s.setTextSize(1);
+  s.setTextFont(7); 
+  s.createSprite(SPRITE_WIDTH, SPRITE_HEIGHT);
+  
+
+  s.fillSprite(TFT_DARKCYAN);
+  s.setCursor(SPRITE_CURSOR_X, SPRITE_CURSOR_Y);
+  s.printf("%02d", days);
+  s.pushSprite(x, SPRITE_Y_TOP);
+
+  x += SPRITE_GAP;
+  s.fillSprite(TFT_DARKCYAN);
+  s.setCursor(SPRITE_CURSOR_X, SPRITE_CURSOR_Y);
+  s.printf("%02d", hours);
+  s.pushSprite(x,SPRITE_Y_TOP);
+
+  x += SPRITE_GAP;
+  s.fillSprite(TFT_DARKCYAN);
+  s.setCursor(SPRITE_CURSOR_X, SPRITE_CURSOR_Y);
+  s.printf("%02d", mins);
+  s.pushSprite(x,SPRITE_Y_TOP);
+
+  x += SPRITE_GAP;
+  s.fillSprite(TFT_DARKCYAN);
+  s.setCursor(SPRITE_CURSOR_X, SPRITE_CURSOR_Y);
+  s.printf("%02d", secs);
+  s.pushSprite(x,SPRITE_Y_TOP);
+
 }
-
 
 // Wifimanager callback notifying us of the need to save config
 void saveConfigCallback()
@@ -86,7 +125,7 @@ bool areWeConfiguring() {
     if (0 == digitalRead(0)) pressed = true;
     delay(1000);
     Serial.printf("%d %d\n", millis()-startAt, pressed); 
-  } while ((millis() - startAt < 5000) &(!pressed));
+  } while ((millis() - startAt < 1000) &(!pressed));
   return pressed;
 }
 
@@ -131,29 +170,11 @@ void setup()
   tft.init();
   tft.setRotation(1); // Set landscape orientation
   tft.fillScreen(TFT_BLACK);
-  //tft.setFreeFont(&FreeSans12pt7b);
 
-
-  // Create the console canvas in RAM (uses 320x200 bytes for 8-bit color)
-  console.setColorDepth(8); // 8-bit depth saves RAM while keeping colors
-  console.createSprite(CONSOLE_WIDTH, CONSOLE_HEIGHT);
-  console.fillSprite(TFT_BLACK);
-  
-  // Configure text settings inside the sprite
-  
-  console.setTextColor(TFT_GREEN, TFT_BLACK); // Classic matrix green text
-  console.setTextSize(1);                      // Font size multiplier
-  console.setTextWrap(true);                   // Auto-wrap long lines
-  console.setTextFont(4);
-
-
-
-  console.setTextFont(7);
-  displayConsoleLog("48  21  05");
 
   // So use setTextFont(7) for days/hours/mins left. Is like a 7-segment display
-  console.setTextFont(4);
-  displayConsoleLog("Days      Hours     Mins");
+  //spriteDays.setTextFont(4);
+  //displayConsoleLog("Days      Hours     Mins");
 
   bool configuring = areWeConfiguring();
 
@@ -244,27 +265,10 @@ void loop()
   int diffMins = int(diff_secs / 60);
   diff_secs -= (double) diffMins*60;
 
+  displayTimeLeft(diffDays, diffHours, diffMins, diff_secs);
   // Debug but can go to screen.
-  Serial.printf("%s are going to %s in %d Days %02d Hours %02d Minutes %02d Seconds 🌞\n", gWho, gWhere, diffDays, diffHours, diffMins, int(diff_secs) );
-
+  //Serial.printf("%s are going to %s in %d Days %02d Hours %02d Minutes %02d Seconds 🌞\n", gWho, gWhere, diffDays, diffHours, diffMins, int(diff_secs) );
 
   // And around we go again
-  delay(5000);
+  delay(1000);
 }
-
-
-
-
-
-
-void testtftloop() {
-  // Simulate incoming debug logs
-  static unsigned long lastLog = 0;
-  if (millis() - lastLog > 800) {
-    lastLog = millis();
-    
-    String debugMsg = "Log standard timestamp: " + String(millis());
-    displayConsoleLog(debugMsg);
-  }
-}
-
