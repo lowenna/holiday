@@ -1,6 +1,8 @@
 #include <WiFiManager.h>
 #include <Preferences.h>
 #include <time.h>
+#include <SPI.h>
+#include <TFT_eSPI.h>
 
 
 // Custom settings for next holiday when not setup at all.
@@ -21,6 +23,52 @@ Preferences prefs;
 
 // For NTP
 const char* MY_TZ = "GMT0BST,M3.5.0/1,M10.5.0";  
+
+// Define console dimensions (matching your 320x200 display)
+#define CONSOLE_WIDTH  320
+#define CONSOLE_HEIGHT 200
+#define FONT_HEIGHT    48 // Default font 1 is 8 pixels high
+// 2 is 16, 4 is 24, 6 is numbers only 48px
+
+TFT_eSPI tft = TFT_eSPI();
+
+
+// Create a Sprite object dedicated to the text console
+TFT_eSprite console = TFT_eSprite(&tft);
+
+// Tracks the cursor Y position within the sprite
+int consoleY = 0; 
+
+// Custom function to mimic Serial.println on the screen
+void displayConsoleLog(String message) {
+  // Mirror to the actual hardware Serial Monitor for safety
+  Serial.println(message);
+
+  // Move the cursor to our current tracked vertical line
+  console.setCursor(0, consoleY);
+  
+  // Print the message to the Sprite buffer
+  console.println(message);
+  
+  // Check if the next string will overflow the bottom of the screen
+  if (consoleY >= CONSOLE_HEIGHT - FONT_HEIGHT) {
+    // Scroll the entire canvas UP by the height of one text line
+    console.scroll(0, -FONT_HEIGHT); 
+    
+    // Keep the cursor pinned to the bottom row
+    consoleY = CONSOLE_HEIGHT - FONT_HEIGHT;
+    
+    // Clear out the trailing leftover artifact line at the very bottom
+    console.fillRect(0, consoleY, CONSOLE_WIDTH, FONT_HEIGHT, TFT_BLACK);
+  } else {
+    // If we haven't hit the bottom yet, just advance down to the next row
+    consoleY += FONT_HEIGHT;
+  }
+
+  // Instantly push the updated buffer to the physical screen
+  console.pushSprite(0, 0);
+}
+
 
 // Wifimanager callback notifying us of the need to save config
 void saveConfigCallback()
@@ -78,6 +126,34 @@ void setup()
   Serial.begin(115200);
   while (!Serial)
     continue;
+
+  // Initialize the physical display
+  tft.init();
+  tft.setRotation(1); // Set landscape orientation
+  tft.fillScreen(TFT_BLACK);
+  //tft.setFreeFont(&FreeSans12pt7b);
+
+
+  // Create the console canvas in RAM (uses 320x200 bytes for 8-bit color)
+  console.setColorDepth(8); // 8-bit depth saves RAM while keeping colors
+  console.createSprite(CONSOLE_WIDTH, CONSOLE_HEIGHT);
+  console.fillSprite(TFT_BLACK);
+  
+  // Configure text settings inside the sprite
+  
+  console.setTextColor(TFT_GREEN, TFT_BLACK); // Classic matrix green text
+  console.setTextSize(1);                      // Font size multiplier
+  console.setTextWrap(true);                   // Auto-wrap long lines
+  console.setTextFont(4);
+
+
+
+  console.setTextFont(7);
+  displayConsoleLog("48  21  05");
+
+  // So use setTextFont(7) for days/hours/mins left. Is like a 7-segment display
+  console.setTextFont(4);
+  displayConsoleLog("Days      Hours     Mins");
 
   bool configuring = areWeConfiguring();
 
@@ -153,7 +229,7 @@ void loop()
   holtimeinfo.tm_year=atoi(gYear)-1900; 
   holtimeinfo.tm_isdst=-1;
 
-  // Convert our struct tms to time_t. Can you ctime() on these to print if necessary
+  // Convert our struct tms to time_t. Can use ctime() on these to print if necessary
   time_t rawlocal = mktime(&timeinfo); 
   time_t rawhol = mktime(&holtimeinfo);
 
@@ -171,6 +247,24 @@ void loop()
   // Debug but can go to screen.
   Serial.printf("%s are going to %s in %d Days %02d Hours %02d Minutes %02d Seconds 🌞\n", gWho, gWhere, diffDays, diffHours, diffMins, int(diff_secs) );
 
+
   // And around we go again
   delay(5000);
 }
+
+
+
+
+
+
+void testtftloop() {
+  // Simulate incoming debug logs
+  static unsigned long lastLog = 0;
+  if (millis() - lastLog > 800) {
+    lastLog = millis();
+    
+    String debugMsg = "Log standard timestamp: " + String(millis());
+    displayConsoleLog(debugMsg);
+  }
+}
+
