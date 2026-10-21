@@ -59,30 +59,23 @@ bool tft_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) 
 #define SPRITE_WIDTH 70
 #define SPRITE_HEIGHT 72 // With a 48px font height within, so 72-48 = 24. 24/2 (top/bottom), so 12 offset from top
 
-void displayTimeLeft(int days, int hours, int mins, int secs ) {
-
-
-  struct tm timeinfo;
-  getLocalTime(&timeinfo);
-
-  // Convert our struct tms to time_t. Can use ctime() on these to print if necessary
-  time_t rawLocal = mktime(&timeinfo); 
-
-  // Top area
+void displayStaticItems() {
+  // Top area: Current time. BUGBUG Change to sprite
   struct tm localTime;
   tft.setTextColor(TFT_GREEN);
   tft.drawLine(0,16,319,16,TFT_WHITE);
   tft.fillRect(0,0,319,15,TFT_BLACK);
+  struct tm timeinfo;
+  getLocalTime(&timeinfo);
+  time_t rawLocal = mktime(&timeinfo); 
   tft.drawString(ctime(&rawLocal), 0, 0, 2);
-// BUGBUG 20/10 This isn't working. 
-
 
   // Bottom area
   tft.drawLine(0,218,319,218,TFT_WHITE);
   tft.fillRect(0,219,319,239,TFT_BLACK);
   tft.drawString(WiFi.SSID(),0,221,2);
 
-  // For text elements
+    // For text elements
   TFT_eSprite t = TFT_eSprite(&tft);
   t.setColorDepth(8);
   t.setTextDatum(CC_DATUM);
@@ -104,11 +97,14 @@ void displayTimeLeft(int days, int hours, int mins, int secs ) {
   t.drawCentreString("Seconds", SPRITE_WIDTH/2, 0, 2);
   t.pushSprite(SPRITE_GAP - SPRITE_WIDTH + (SPRITE_GAP*3) - 5,SPRITE_Y_TOP+SPRITE_HEIGHT, TFT_BLACK);
 
+}
+
+void displayTimeLeft(int days, int hours, int mins, int secs ) {
 
   int x = 5;
   TFT_eSprite s = TFT_eSprite(&tft);
   s.setColorDepth(8); 
-  s.setTextColor(TFT_WHITE, TFT_DARKCYAN);
+  s.setTextColor(TFT_YELLOW, TFT_DARKCYAN);
   s.setTextSize(1);
   s.setTextFont(7); 
   s.createSprite(SPRITE_WIDTH, SPRITE_HEIGHT);
@@ -117,25 +113,29 @@ void displayTimeLeft(int days, int hours, int mins, int secs ) {
   s.fillSprite(TFT_DARKCYAN);
   s.setCursor(SPRITE_CURSOR_X, SPRITE_CURSOR_Y);
   s.printf("%02d", days);
-  s.pushSprite(x, SPRITE_Y_TOP);
+  s.pushSprite(x, SPRITE_Y_TOP, TFT_DARKCYAN);
+
+  s.setTextColor(TFT_YELLOW, TFT_DARKCYAN);
 
   x += SPRITE_GAP;
   s.fillSprite(TFT_DARKCYAN);
   s.setCursor(SPRITE_CURSOR_X, SPRITE_CURSOR_Y);
   s.printf("%02d", hours);
-  s.pushSprite(x,SPRITE_Y_TOP);
+  s.pushSprite(x,SPRITE_Y_TOP, TFT_DARKCYAN);
+
+  s.setTextColor(TFT_SILVER, TFT_DARKCYAN);
 
   x += SPRITE_GAP;
   s.fillSprite(TFT_DARKCYAN);
   s.setCursor(SPRITE_CURSOR_X, SPRITE_CURSOR_Y);
   s.printf("%02d", mins);
-  s.pushSprite(x,SPRITE_Y_TOP);
+  s.pushSprite(x,SPRITE_Y_TOP, TFT_DARKCYAN);
 
   x += SPRITE_GAP;
   s.fillSprite(TFT_DARKCYAN);
   s.setCursor(SPRITE_CURSOR_X, SPRITE_CURSOR_Y);
   s.printf("%02d", secs);
-  s.pushSprite(x,SPRITE_Y_TOP);
+  s.pushSprite(x,SPRITE_Y_TOP, TFT_DARKCYAN);
 
 }
 
@@ -205,10 +205,7 @@ void setup()
   tft.setRotation(1); // Set landscape orientation
   tft.fillScreen(TFT_BLACK);
   tft.setSwapBytes(true); // THIS IS CRITICAL OTHERWISE BACKGROUND IMAGE DOESN'T RENDER PROPERLY AT ALL!!!!
-  drawBackground();
-
-
-
+ 
   bool configuring = areWeConfiguring();
 
   readPreferences() ;
@@ -263,7 +260,10 @@ void setup()
 
   // NTP
   configTzTime(MY_TZ, "pool.ntp.org");
-  
+ 
+  drawBackground();
+  displayStaticItems();
+
   Serial.println("setup() complete");  
 }
 
