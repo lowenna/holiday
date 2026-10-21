@@ -3,16 +3,24 @@
 #include <time.h>
 #include <SPI.h>
 #include <TFT_eSPI.h>
+#include <TJpg_Decoder.h>
 
+
+// To get background image
+// 1. google, save
+// 2. image resizer (powertoys for Windows) to 320x240
+// 3. xxd -i <file.jpg> (use git bash or wsl)
+// 4. paste hex into maldives.h
+#include "maldives.h" // Hexdump of JPG background
 
 // Custom settings for next holiday when not setup at all.
 // If already in NVR, overwritten by that.
 // Think can clear with prefs.begin(); prefs.remove("hol"); prefs.end();  Haven't tested
 char gHour[3] = "10";
+char gMins[3] = "0";
 char gDay[3] = "5";
 char gMonth[3] = "12";
 char gYear[5] = "2026";
-char gWho[21] = "Sandra & John";
 char gWhere[21] = "Maldives";
 
 // Callback from Wifimanager sets this flag to indicate data needs to be saved
@@ -32,25 +40,47 @@ const char* MY_TZ = "GMT0BST,M3.5.0/1,M10.5.0";
 
 TFT_eSPI tft = TFT_eSPI();
 
+
+// This function is called by the decoder for every block of pixels (MCU)
+bool tft_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
+  // Stop drawing if the image goes off the bottom of the screen
+  if (y >= tft.height()) return false;
+  // Push the decoded block of pixels to the TFT screen
+  tft.pushImage(x, y, w, h, bitmap);
+  return true; // Return true to keep decoding
+}
+
+
+
 #define SPRITE_CURSOR_X 4  // Inside the sprite
 #define SPRITE_CURSOR_Y 12
 #define SPRITE_GAP 80 // Between start of left boundary between boxes
-#define SPRITE_Y_TOP 64
+#define SPRITE_Y_TOP 80
 #define SPRITE_WIDTH 70
 #define SPRITE_HEIGHT 72 // With a 48px font height within, so 72-48 = 24. 24/2 (top/bottom), so 12 offset from top
 
 void displayTimeLeft(int days, int hours, int mins, int secs ) {
 
+
+  struct tm timeinfo;
+  getLocalTime(&timeinfo);
+
+  // Convert our struct tms to time_t. Can use ctime() on these to print if necessary
+  time_t rawLocal = mktime(&timeinfo); 
+
   // Top area
+  struct tm localTime;
   tft.setTextColor(TFT_GREEN);
   tft.drawLine(0,16,319,16,TFT_WHITE);
-  tft.fillRect(0,15,319,15,TFT_BLACK);
-  tft.drawString("Top status stuff here", 0, 0, 2);
-  
+  tft.fillRect(0,0,319,15,TFT_BLACK);
+  tft.drawString(ctime(&rawLocal), 0, 0, 2);
+// BUGBUG 20/10 This isn't working. 
+
+
   // Bottom area
   tft.drawLine(0,218,319,218,TFT_WHITE);
   tft.fillRect(0,219,319,239,TFT_BLACK);
-  tft.drawString("Status stuff will go here",0,221,2);
+  tft.drawString(WiFi.SSID(),0,221,2);
 
   // For text elements
   TFT_eSprite t = TFT_eSprite(&tft);
@@ -132,32 +162,36 @@ bool areWeConfiguring() {
 void readPreferences() {
   prefs.begin("hol",true);
   String lHour = prefs.getString("hour","");
+  String lMins = prefs.getString("mins","");
   String lDay = prefs.getString("day","");
   String lMonth = prefs.getString("month","");
   String lYear = prefs.getString("year","");
-  String lWho = prefs.getString("who","");
   String lWhere = prefs.getString("where","");
   prefs.end();
 
   if ((lHour.length() > 0) && (strcmp(lHour.c_str(), gHour))) strcpy(gHour, lHour.c_str());
+  if ((lMins.length() > 0) && (strcmp(lMins.c_str(), gMins))) strcpy(gMins, lMins.c_str());
   if ((lDay.length() > 0) && (strcmp(lDay.c_str(), gDay))) strcpy(gDay, lDay.c_str());
   if ((lMonth.length() > 0) && (strcmp(lMonth.c_str(), gMonth))) strcpy(gMonth, lMonth.c_str());
   if ((lYear.length() > 0) && (strcmp(lYear.c_str(), gYear))) strcpy(gYear, lYear.c_str());
-  if ((lWho.length() > 0) && (strcmp(lWho.c_str(), gWho))) strcpy(gWho, lWho.c_str());
   if ((lWhere.length() > 0) && (strcmp(lWhere.c_str(), gWhere))) strcpy(gWhere,lWhere.c_str());   
 
-  Serial.printf("Pref: At %02s:00 on %02s/%02s/%04s %s are going to %s\n", gHour, gDay, gMonth, gYear, gWho, gWhere);
+  Serial.printf("Pref: At %02s:%02s on %02s/%02s/%04s - %s\n", gHour, gMins, gDay, gMonth, gYear, gWhere);
 }
 
-void writePreferences(String hour, String day, String month, String year, String who, String where) {
+void writePreferences(String hour, String mins, String day, String month, String year, String where) {
   prefs.begin("hol", false);
   prefs.putString("hour", hour);
+  prefs.putString("mins", mins);
   prefs.putString("day", day);
   prefs.putString("month", month);
   prefs.putString("year", year);
-  prefs.putString("who", who);
   prefs.putString("where", where);
   prefs.end();
+}
+void drawBackground() {
+  TJpgDec.setCallback(tft_output);   // Point to our screen render function
+  TJpgDec.drawJpg(0, 20, maldives__esp32__jpg, sizeof(maldives__esp32__jpg));
 }
 
 void setup()
@@ -170,22 +204,21 @@ void setup()
   tft.init();
   tft.setRotation(1); // Set landscape orientation
   tft.fillScreen(TFT_BLACK);
+  tft.setSwapBytes(true); // THIS IS CRITICAL OTHERWISE BACKGROUND IMAGE DOESN'T RENDER PROPERLY AT ALL!!!!
+  drawBackground();
 
 
-  // So use setTextFont(7) for days/hours/mins left. Is like a 7-segment display
-  //spriteDays.setTextFont(4);
-  //displayConsoleLog("Days      Hours     Mins");
 
   bool configuring = areWeConfiguring();
 
   readPreferences() ;
 
   WiFiManagerParameter custom_hol_hour("hour", "Hour", gHour, 2);
+  WiFiManagerParameter custom_hol_mins("mins", "Mins", gMins, 2);
   WiFiManagerParameter custom_hol_day("day", "Day", gDay, 2);
   WiFiManagerParameter custom_hol_month("month", "Month", gMonth, 2);
   WiFiManagerParameter custom_hol_year("year", "Year", gYear, 4);
   WiFiManagerParameter custom_hol_where("where", "Where", gWhere, 20);
-  WiFiManagerParameter custom_hol_who("who", "Who", gWho, 20);
 
   // Local intialization. Once its business is done, there is no need to keep it around
   WiFiManager wifiManager;
@@ -195,11 +228,11 @@ void setup()
 
   // custom parameters
   wifiManager.addParameter(&custom_hol_hour);
+  wifiManager.addParameter(&custom_hol_mins);
   wifiManager.addParameter(&custom_hol_day);
   wifiManager.addParameter(&custom_hol_month);
   wifiManager.addParameter(&custom_hol_year);
   wifiManager.addParameter(&custom_hol_where);
-  wifiManager.addParameter(&custom_hol_who);
 
   boolean wmResult;
   if (configuring) {
@@ -219,14 +252,14 @@ void setup()
 
   // read updated parameters
   String hour =  custom_hol_hour.getValue();
+  String mins = custom_hol_mins.getValue();
   String day =  custom_hol_day.getValue();
   String month = custom_hol_month.getValue();
   String year = custom_hol_year.getValue();
-  String who = custom_hol_who.getValue();
   String where = custom_hol_where.getValue();
 
   // save the custom parameters to NVR
-  if (shouldSaveConfig) writePreferences(hour,day,month,year,who,where);
+  if (shouldSaveConfig) writePreferences(hour,mins,day,month,year,where);
 
   // NTP
   configTzTime(MY_TZ, "pool.ntp.org");
@@ -245,6 +278,7 @@ void loop()
   struct tm holtimeinfo;
   memset(&holtimeinfo,0,sizeof(struct tm));
   holtimeinfo.tm_hour=atoi(gHour);
+  holtimeinfo.tm_min=atoi(gMins);
   holtimeinfo.tm_mday=atoi(gDay);
   holtimeinfo.tm_mon=atoi(gMonth)-1;
   holtimeinfo.tm_year=atoi(gYear)-1900; 
@@ -266,9 +300,7 @@ void loop()
   diff_secs -= (double) diffMins*60;
 
   displayTimeLeft(diffDays, diffHours, diffMins, diff_secs);
-  // Debug but can go to screen.
-  //Serial.printf("%s are going to %s in %d Days %02d Hours %02d Minutes %02d Seconds 🌞\n", gWho, gWhere, diffDays, diffHours, diffMins, int(diff_secs) );
 
   // And around we go again
-  delay(1000);
+  delay(500);
 }
