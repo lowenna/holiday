@@ -23,6 +23,9 @@ char gMonth[3] = "12";
 char gYear[5] = "2026";
 char gWhere[21] = "Maldives";
 
+// Global value calculated once for when going on holiday
+time_t rawhol;
+
 // Callback from Wifimanager sets this flag to indicate data needs to be saved
 bool shouldSaveConfig = false;
 
@@ -39,7 +42,8 @@ const char* MY_TZ = "GMT0BST,M3.5.0/1,M10.5.0";
 // 2 is 16, 4 is 24, 6 is numbers only 48px
 
 TFT_eSPI tft = TFT_eSPI();
-
+TFT_eSprite mainsprite = TFT_eSprite(&tft); // BUGBUG CAN REMOVE SOON - CODE BEING REMOVED SLOWLY FROMOLD RENDERING FUNCTION
+TFT_eSprite countdownSprite = TFT_eSprite(&tft); 
 
 // This function is called by the decoder for every block of pixels (MCU)
 bool tft_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
@@ -47,6 +51,28 @@ bool tft_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) 
   if (y >= tft.height()) return false;
   // Push the decoded block of pixels to the TFT screen
   tft.pushImage(x, y, w, h, bitmap);
+  return true; // Return true to keep decoding
+}
+
+// JJH - same as tft_output except stops at 209 rows
+// This function is called by the decoder for every block of pixels (MCU)
+bool tft_output2(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
+  // Stop drawing if the image goes off the bottom of the screen
+  //if (y >= tft.height()) return false;
+  if (y >= 209) return false;
+  // Push the decoded block of pixels to the TFT screen
+  tft.pushImage(x, y, w, h, bitmap);
+  return true; // Return true to keep decoding
+}
+
+// JJH - same as tft_output except stops at 48 rows and pushes to a countdownSprite, not the TFT
+// This function is called by the decoder for every block of pixels (MCU)
+bool tft_output3(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
+  // Stop drawing if the image goes off the bottom of the screen
+  //if (y >= tft.height()) return false;
+  if (y >= 48) return false;
+  // Push the decoded block of pixels to the TFT screen
+  countdownSprite.pushImage(x, y, w, h, bitmap);
   return true; // Return true to keep decoding
 }
 
@@ -59,21 +85,116 @@ bool tft_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) 
 #define SPRITE_WIDTH 70
 #define SPRITE_HEIGHT 72 // With a 48px font height within, so 72-48 = 24. 24/2 (top/bottom), so 12 offset from top
 
-void displayStaticItems() {
-  // Top area: Current time. BUGBUG Change to sprite
+
+/*
+ SPRITE AREA
+   0--15    Current time 16 px tall     // displayCurrentTimeSprite()
+   16       Gap                         // implied
+   17       Horizontal line             // displayLines()
+   18       Gap                         // implied
+   19..228  Picture, where & how long left area. This is 209 px tall
+ 
+ FIXED AREA  
+  229      Gap                          // implied
+  230      Horizontal line              // displayLines()
+  231      Gap                          // implied
+  232..239 SSID 8px tall on left, When 8px tall right-aligned  
+*/
+
+void displayCurrentTimeSprite() {
+  TFT_eSprite s = TFT_eSprite(&tft);
   struct tm localTime;
-  tft.setTextColor(TFT_GREEN);
-  tft.drawLine(0,16,319,16,TFT_WHITE);
-  tft.fillRect(0,0,319,15,TFT_BLACK);
   struct tm timeinfo;
   getLocalTime(&timeinfo);
   time_t rawLocal = mktime(&timeinfo); 
-  tft.drawString(ctime(&rawLocal), 0, 0, 2);
+  s.setColorDepth(8); 
+  s.setTextColor(TFT_GREEN);//, TFT_DARKCYAN);
+  s.setTextSize(1);
+  s.createSprite(320, 16);
+  s.drawCentreString(ctime(&rawLocal), (320/2), 0, 2);
+  s.pushSprite(0,0);
+  s.deleteSprite();
+}
 
-  // Bottom area
-  tft.drawLine(0,218,319,218,TFT_WHITE);
-  tft.fillRect(0,219,319,239,TFT_BLACK);
-  tft.drawString(WiFi.SSID(),0,221,2);
+void displayLines() {
+  #define TOP_LINE 16+1       //16 being text height. 
+  #define BOT_LINE 239-16-1
+  tft.drawLine(0,TOP_LINE,319,TOP_LINE,TFT_WHITE);
+  tft.drawLine(0,BOT_LINE,319,BOT_LINE,TFT_WHITE);
+}
+
+void displaySSIDAndWhen() {
+  tft.setTextColor(TFT_GREEN);
+  tft.setTextDatum(TL_DATUM);
+  tft.drawString(WiFi.SSID(),0,239-16,2);
+  tft.setTextDatum(TR_DATUM);
+  tft.drawString(ctime(&rawhol),319,239-16,2);
+}
+
+void drawStaticBackgroundImage() {
+  //return; // BUGBUG HACK for now
+  TJpgDec.setCallback(tft_output2);   // Point to our screen render function
+  TJpgDec.drawJpg(0, 24, maldives__esp32__jpg, sizeof(maldives__esp32__jpg));
+}
+
+void drawWhere() {
+    // For text elements
+  TFT_eSprite t = TFT_eSprite(&tft);
+  //t.setColorDepth(8);
+  t.setTextDatum(CC_DATUM);
+  t.fillScreen(TFT_BLACK);
+  t.setTextColor(TFT_WHITE); 
+  t.createSprite(320, 26); // Font 4 is 26px high
+  t.drawCentreString(gWhere, 320/2, 0, 4);
+  t.pushSprite(0, 35, TFT_BLACK);
+  t.deleteSprite();
+}
+
+// OK, needs some explaining. I can't have a straight background image as would get overwritten by text unless has solid block behind.
+// So, instead the background picture is originally painted static once during setup.
+// For the time left, we have a sprite offset to overlay onto the backround with the same image so no "tear" visible
+// This sprite is only tall enough to fit the DD HH MM SS bit.
+void drawCountdownLeft(int days, int hours, int mins, int secs) {
+  countdownSprite.setColorDepth(16); 
+  countdownSprite.createSprite(320,48);
+  countdownSprite.setSwapBytes(true);
+  countdownSprite.fillSprite(TFT_BLACK);
+  TJpgDec.setCallback(tft_output3);   // Point to our screen render function
+  TJpgDec.drawJpg(0, 24-150, maldives__esp32__jpg, sizeof(maldives__esp32__jpg)); // 24 is top of static background. 150 is top row of sprite location
+
+
+  static bool colon = false;
+  countdownSprite.setTextColor(TFT_DARKCYAN);
+  countdownSprite.setTextSize(1);
+  countdownSprite.setTextFont(7); 
+
+
+
+  int x = 5;
+  countdownSprite.setCursor(x,0);
+  countdownSprite.printf("%02d", days);
+
+  x+=80;
+  countdownSprite.setCursor(x,0);
+  countdownSprite.printf("%02d:", hours);
+
+  x+=80;
+  countdownSprite.setCursor(x,0);
+  countdownSprite.printf("%02d:", mins);
+
+  x+=80;
+  countdownSprite.setCursor(x,0);
+  countdownSprite.printf("%02d", secs);
+
+  countdownSprite.pushSprite(0, 150, TFT_BLACK);
+  countdownSprite.deleteSprite();
+}
+
+
+// DELETE ME SOON....
+void displayStaticItems() {
+return;
+  tft.setTextColor(TFT_GREEN);
 
     // For text elements
   TFT_eSprite t = TFT_eSprite(&tft);
@@ -101,6 +222,7 @@ void displayStaticItems() {
 
 void displayTimeLeft(int days, int hours, int mins, int secs ) {
 
+  return;
   int x = 5;
   TFT_eSprite s = TFT_eSprite(&tft);
   s.setColorDepth(8); 
@@ -189,10 +311,6 @@ void writePreferences(String hour, String mins, String day, String month, String
   prefs.putString("where", where);
   prefs.end();
 }
-void drawBackground() {
-  TJpgDec.setCallback(tft_output);   // Point to our screen render function
-  TJpgDec.drawJpg(0, 20, maldives__esp32__jpg, sizeof(maldives__esp32__jpg));
-}
 
 void setup()
 {
@@ -260,21 +378,8 @@ void setup()
 
   // NTP
   configTzTime(MY_TZ, "pool.ntp.org");
- 
-  drawBackground();
-  displayStaticItems();
 
-  Serial.println("setup() complete");  
-}
-
-void loop()
-{
-  struct tm timeinfo;
-  if (!getLocalTime(&timeinfo)) {
-   Serial.println("Failed to get localtime!");
-  } 
-
-  // Build a struct tm containing date/time when going on holiday
+  // Store globally when going on holiday
   struct tm holtimeinfo;
   memset(&holtimeinfo,0,sizeof(struct tm));
   holtimeinfo.tm_hour=atoi(gHour);
@@ -283,13 +388,32 @@ void loop()
   holtimeinfo.tm_mon=atoi(gMonth)-1;
   holtimeinfo.tm_year=atoi(gYear)-1900; 
   holtimeinfo.tm_isdst=-1;
+  rawhol = mktime(&holtimeinfo);
+
+  displayLines();
+  displaySSIDAndWhen();
+  drawStaticBackgroundImage();
+  drawWhere();
+
+
+
+  Serial.println("setup() complete");  
+}
+
+void loop()
+{
+  unsigned long startMillis = millis();
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+   Serial.println("Failed to get localtime!");
+  } 
 
   // Convert our struct tms to time_t. Can use ctime() on these to print if necessary
   time_t rawlocal = mktime(&timeinfo); 
-  time_t rawhol = mktime(&holtimeinfo);
 
   // Now time_t raw* can be subtracted to get seconds between
   double diff_secs = difftime(rawhol, rawlocal);
+  if (diff_secs < 0) diff_secs = 0 ;
 
   // Now a question of getting days, hours, mins and remaining seconds
   int diffDays = int(diff_secs / 86400);
@@ -299,8 +423,12 @@ void loop()
   int diffMins = int(diff_secs / 60);
   diff_secs -= (double) diffMins*60;
 
-  displayTimeLeft(diffDays, diffHours, diffMins, diff_secs);
+  drawCountdownLeft(diffDays, diffHours, diffMins, diff_secs);
+  displayCurrentTimeSprite();
+
+  unsigned long durationMillis = startMillis - millis() ;
+  Serial.printf("Loop took %d ms\n", durationMillis);
 
   // And around we go again
-  delay(500);
+  //delay(500);
 }
