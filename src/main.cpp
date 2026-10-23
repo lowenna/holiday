@@ -168,21 +168,20 @@ void drawCountdownLeft(int days, int hours, int mins, int secs) {
   countdownSprite.setTextSize(1);
   countdownSprite.setTextFont(7); 
 
-
-
-  int x = 5;
+  int x = 15;
   countdownSprite.setCursor(x,0);
-  countdownSprite.printf("%02d", days);
+  countdownSprite.printf("%02d.", days);
 
+  colon=!colon;
   x+=80;
   countdownSprite.setCursor(x,0);
-  countdownSprite.printf("%02d:", hours);
+  countdownSprite.printf("%02d%c", hours, (colon?':':'\0'));
 
-  x+=80;
+  x+=75;
   countdownSprite.setCursor(x,0);
-  countdownSprite.printf("%02d:", mins);
+  countdownSprite.printf("%02d%c", mins, (colon?':':'\0'));
 
-  x+=80;
+  x+=75;
   countdownSprite.setCursor(x,0);
   countdownSprite.printf("%02d", secs);
 
@@ -220,47 +219,6 @@ return;
 
 }
 
-void displayTimeLeft(int days, int hours, int mins, int secs ) {
-
-  return;
-  int x = 5;
-  TFT_eSprite s = TFT_eSprite(&tft);
-  s.setColorDepth(8); 
-  s.setTextColor(TFT_YELLOW, TFT_DARKCYAN);
-  s.setTextSize(1);
-  s.setTextFont(7); 
-  s.createSprite(SPRITE_WIDTH, SPRITE_HEIGHT);
-  
-
-  s.fillSprite(TFT_DARKCYAN);
-  s.setCursor(SPRITE_CURSOR_X, SPRITE_CURSOR_Y);
-  s.printf("%02d", days);
-  s.pushSprite(x, SPRITE_Y_TOP, TFT_DARKCYAN);
-
-  s.setTextColor(TFT_YELLOW, TFT_DARKCYAN);
-
-  x += SPRITE_GAP;
-  s.fillSprite(TFT_DARKCYAN);
-  s.setCursor(SPRITE_CURSOR_X, SPRITE_CURSOR_Y);
-  s.printf("%02d", hours);
-  s.pushSprite(x,SPRITE_Y_TOP, TFT_DARKCYAN);
-
-  s.setTextColor(TFT_SILVER, TFT_DARKCYAN);
-
-  x += SPRITE_GAP;
-  s.fillSprite(TFT_DARKCYAN);
-  s.setCursor(SPRITE_CURSOR_X, SPRITE_CURSOR_Y);
-  s.printf("%02d", mins);
-  s.pushSprite(x,SPRITE_Y_TOP, TFT_DARKCYAN);
-
-  x += SPRITE_GAP;
-  s.fillSprite(TFT_DARKCYAN);
-  s.setCursor(SPRITE_CURSOR_X, SPRITE_CURSOR_Y);
-  s.printf("%02d", secs);
-  s.pushSprite(x,SPRITE_Y_TOP, TFT_DARKCYAN);
-
-}
-
 // Wifimanager callback notifying us of the need to save config
 void saveConfigCallback()
 {
@@ -277,7 +235,7 @@ bool areWeConfiguring() {
     if (0 == digitalRead(0)) pressed = true;
     delay(1000);
     Serial.printf("%d %d\n", millis()-startAt, pressed); 
-  } while ((millis() - startAt < 1000) &(!pressed));
+  } while ((millis() - startAt < 5000) &(!pressed));
   return pressed;
 }
 
@@ -430,5 +388,5 @@ void loop()
   Serial.printf("Loop took %d ms\n", durationMillis);
 
   // And around we go again
-  //delay(500);
+  delay(250);
 }
