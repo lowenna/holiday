@@ -8,8 +8,8 @@
 
 // To get background image
 // 1. google, save
-// 2. image resizer (powertoys for Windows) to 320x240
-// 3. xxd -i <file.jpg> (use git bash or wsl)
+// 2. image resizer (powertoys for Windows) to 320x240  (320x209 should be fine)
+// 3. xxd -i <file.jpg> (use git bash or possibly wsl, I used git bash)
 // 4. paste hex into maldives.h
 #include "maldives.h" // Hexdump of JPG background
 
@@ -35,24 +35,9 @@ Preferences prefs;
 // For NTP
 const char* MY_TZ = "GMT0BST,M3.5.0/1,M10.5.0";  
 
-// Define console dimensions (matching your 320x200 display)
-#define CONSOLE_WIDTH  320
-#define CONSOLE_HEIGHT 200
-#define FONT_HEIGHT    48 // Default font 1 is 8 pixels high
-// 2 is 16, 4 is 24, 6 is numbers only 48px
-
 TFT_eSPI tft = TFT_eSPI();
-TFT_eSprite mainsprite = TFT_eSprite(&tft); // BUGBUG CAN REMOVE SOON - CODE BEING REMOVED SLOWLY FROMOLD RENDERING FUNCTION
 TFT_eSprite countdownSprite = TFT_eSprite(&tft); 
 
-// This function is called by the decoder for every block of pixels (MCU)
-bool tft_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
-  // Stop drawing if the image goes off the bottom of the screen
-  if (y >= tft.height()) return false;
-  // Push the decoded block of pixels to the TFT screen
-  tft.pushImage(x, y, w, h, bitmap);
-  return true; // Return true to keep decoding
-}
 
 // JJH - same as tft_output except stops at 209 rows
 // This function is called by the decoder for every block of pixels (MCU)
@@ -77,15 +62,6 @@ bool tft_output3(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap)
 }
 
 
-
-#define SPRITE_CURSOR_X 4  // Inside the sprite
-#define SPRITE_CURSOR_Y 12
-#define SPRITE_GAP 80 // Between start of left boundary between boxes
-#define SPRITE_Y_TOP 80
-#define SPRITE_WIDTH 70
-#define SPRITE_HEIGHT 72 // With a 48px font height within, so 72-48 = 24. 24/2 (top/bottom), so 12 offset from top
-
-
 /*
  SPRITE AREA
    0--15    Current time 16 px tall     // displayCurrentTimeSprite()
@@ -103,7 +79,6 @@ bool tft_output3(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap)
 
 void displayCurrentTimeSprite() {
   TFT_eSprite s = TFT_eSprite(&tft);
-  struct tm localTime;
   struct tm timeinfo;
   getLocalTime(&timeinfo);
   time_t rawLocal = mktime(&timeinfo); 
@@ -170,7 +145,7 @@ void drawCountdownLeft(int days, int hours, int mins, int secs) {
 
   int x = 15;
   countdownSprite.setCursor(x,0);
-  countdownSprite.printf("%02d.", days);
+  countdownSprite.printf("%d.", days);
 
   colon=!colon;
   x+=80;
@@ -189,35 +164,6 @@ void drawCountdownLeft(int days, int hours, int mins, int secs) {
   countdownSprite.deleteSprite();
 }
 
-
-// DELETE ME SOON....
-void displayStaticItems() {
-return;
-  tft.setTextColor(TFT_GREEN);
-
-    // For text elements
-  TFT_eSprite t = TFT_eSprite(&tft);
-  t.setColorDepth(8);
-  t.setTextDatum(CC_DATUM);
-  t.setTextColor(TFT_WHITE); 
-  t.createSprite(SPRITE_WIDTH, 20); // 2px padding top/bottom for 16px font
- 
-  t.drawCentreString("Days", SPRITE_WIDTH/2, 0, 2);
-  t.pushSprite(5,SPRITE_Y_TOP+SPRITE_HEIGHT, TFT_BLACK);
-
-  t.fillScreen(TFT_BLACK);
-  t.drawCentreString("Hours", SPRITE_WIDTH/2, 0, 2);
-  t.pushSprite(SPRITE_GAP - SPRITE_WIDTH + SPRITE_GAP - 5,SPRITE_Y_TOP+SPRITE_HEIGHT, TFT_BLACK);
-
-  t.fillScreen(TFT_BLACK);
-  t.drawCentreString("Minutes", SPRITE_WIDTH/2, 0, 2);
-  t.pushSprite(SPRITE_GAP - SPRITE_WIDTH + (SPRITE_GAP*2) - 5,SPRITE_Y_TOP+SPRITE_HEIGHT, TFT_BLACK);
-
-  t.fillScreen(TFT_BLACK);
-  t.drawCentreString("Seconds", SPRITE_WIDTH/2, 0, 2);
-  t.pushSprite(SPRITE_GAP - SPRITE_WIDTH + (SPRITE_GAP*3) - 5,SPRITE_Y_TOP+SPRITE_HEIGHT, TFT_BLACK);
-
-}
 
 // Wifimanager callback notifying us of the need to save config
 void saveConfigCallback()
@@ -353,14 +299,11 @@ void setup()
   drawStaticBackgroundImage();
   drawWhere();
 
-
-
   Serial.println("setup() complete");  
 }
 
 void loop()
 {
-  unsigned long startMillis = millis();
   struct tm timeinfo;
   if (!getLocalTime(&timeinfo)) {
    Serial.println("Failed to get localtime!");
@@ -383,9 +326,6 @@ void loop()
 
   drawCountdownLeft(diffDays, diffHours, diffMins, diff_secs);
   displayCurrentTimeSprite();
-
-  unsigned long durationMillis = startMillis - millis() ;
-  Serial.printf("Loop took %d ms\n", durationMillis);
 
   // And around we go again
   delay(250);
