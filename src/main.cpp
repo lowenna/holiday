@@ -176,12 +176,66 @@ void saveConfigCallback()
 bool areWeConfiguring() {
   unsigned long startAt = millis();
   bool pressed = false; 
+
+    // For text elements
+
+
+
   Serial.println("5 sec countdown. Press outside button for 1 second to configure");
-  do {
+
+  tft.fillScreen(TFT_BLACK);
+  //tft.setTextDatum(CC_DATUM);
+  tft.setTextFont(2);
+  tft.setTextSize(1);
+  tft.println("To re-configure, tap this button within 5 seconds.");
+  tft.println(" - Take the back cover off to find it!");
+  tft.println(" - It's tiny and black-on-silver, not yellow.");
+  tft.println(" - It's next to the micro-USB power connector.");
+  tft.println(" - You will need a phone to complete this...");
+
+  // Outside
+  tft.drawRect(50,100,220,110, TFT_WHITE);
+  tft.fillRect(51,101,218,108, TFT_DARKGREEN);
+
+  // Top row of pins
+  int x = 57;
+  while(x < 270) {
+  tft.drawCircle(x,107,3, TFT_SILVER);
+  x += 12;
+  }
+
+  // Bottom row of pins
+  x = 57;
+  while(x < 270) {
+  tft.drawCircle(x,203,3, TFT_SILVER);
+  x += 12;
+  }
+
+  tft.fillRect(51,120,70,70, TFT_DARKGREY); // The ESP32 chip
+  tft.fillRect(270-31,140,30,30, TFT_DARKGREY); // The USB power
+  tft.fillRect(250,180,10,10,TFT_DARKGREY); // The yellow button
+  tft.fillRect(250,120,10,10, TFT_YELLOW); // The reset button
+  tft.setCursor(60,147);
+  tft.setTextColor(TFT_BLACK);
+  tft.print("ESP32");
+  tft.setCursor(242,147);
+  tft.print("USB");
+
+  tft.setCursor(212,120);
+  tft.setTextColor(TFT_YELLOW);
+  tft.print("Here!");
+  tft.setCursor(0,220);
+  tft.setTextColor(TFT_YELLOW);
+  tft.print("(C) John Howard 2026");
+    do {
     if (0 == digitalRead(0)) pressed = true;
-    delay(1000);
-    Serial.printf("%d %d\n", millis()-startAt, pressed); 
+    delay(100);
+    
+    //Serial.printf("%d %d\n", int((millis()-startAt)/1000), pressed); 
   } while ((millis() - startAt < 5000) &(!pressed));
+
+  tft.fillScreen(TFT_BLACK);
+
   return pressed;
 }
 
@@ -214,6 +268,7 @@ void writePreferences(String hour, String mins, String day, String month, String
   prefs.putString("year", year);
   prefs.putString("where", where);
   prefs.end();
+  ESP.restart();
 }
 
 void setup()
@@ -255,15 +310,40 @@ void setup()
 
   boolean wmResult;
   if (configuring) {
+
+  tft.setTextFont(2);
+  tft.setTextSize(1);
+  tft.setCursor(0,0);
+  tft.setTextColor(TFT_WHITE);
+  tft.println("Starting setup...");
+  tft.println(" - On your iPhone, go to Settings, WiFi");
+  tft.println(" - Connect to ESP_xxxxxxxxxx");
+  tft.println(" - Wait a few seconds for captive portal");
+  tft.println(" - Tap the 'Configure' button");
+  tft.println(" - Select WiFi network");
+  tft.println(" - You must re-enter password (soz)");
+  tft.println(" - Scroll down further");
+  tft.println(" - Enter/update the holiday date/time/where");
+  tft.println(" - Scroll down further and tap 'Save'");
+  tft.println("IMPORTANT");
+  tft.println(" - CHECK ALL FIELDS");
+  tft.println(" - It may crash if you eg enter 13 for month");
+  tft.println(" - Year MUST be 4 digits");
+  
     wmResult = wifiManager.startConfigPortal() ;
   } else {
     wmResult = wifiManager.autoConnect();
   }
 
+  tft.fillScreen(TFT_BLACK);
+
+
   if (!wmResult)
   {
+    tft.setCursor(0,0);
+    tft.println("Failed to connect to WiFi. Restarting...");
     Serial.println("failed to connect and hit timeout");
-    delay(3000);
+    delay(5000);
     // reset and try again, or maybe put it to deep sleep
     ESP.restart();
     delay(5000);
