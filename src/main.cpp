@@ -4,6 +4,13 @@
 #include <SPI.h>
 #include <TFT_eSPI.h>
 #include <TJpg_Decoder.h>
+#include "audio.h"
+
+
+// GPIOs for AZ Touch. Self explanatory.
+#define AZTOUCH_BEEPER 21
+#define AZTOUCH_TOUCH_CS 14
+#define AZTOUCH_TOUCH_IRQ 27
 
 
 // To get background image
@@ -179,8 +186,6 @@ bool areWeConfiguring() {
 
     // For text elements
 
-
-
   Serial.println("5 sec countdown. Press outside button for 1 second to configure");
 
   tft.fillScreen(TFT_BLACK);
@@ -273,6 +278,12 @@ void writePreferences(String hour, String mins, String day, String month, String
 
 void setup()
 {
+
+
+  LcarsAudio::begin(AZTOUCH_BEEPER);
+  LcarsAudio::beepBoot();
+  while (millis() < 400) { LcarsAudio::update(); };
+
   Serial.begin(115200);
   while (!Serial)
     continue;
@@ -283,6 +294,8 @@ void setup()
   tft.fillScreen(TFT_BLACK);
   tft.setSwapBytes(true); // THIS IS CRITICAL OTHERWISE BACKGROUND IMAGE DOESN'T RENDER PROPERLY AT ALL!!!!
  
+
+
   bool configuring = areWeConfiguring();
 
   readPreferences() ;
@@ -388,6 +401,7 @@ void loop()
   if (!getLocalTime(&timeinfo)) {
    Serial.println("Failed to get localtime!");
   } 
+
 
   // Convert our struct tms to time_t. Can use ctime() on these to print if necessary
   time_t rawlocal = mktime(&timeinfo); 
