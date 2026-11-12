@@ -4,6 +4,7 @@
 #include <SPI.h>
 #include <TFT_eSPI.h>
 #include <TJpg_Decoder.h>
+#include <XPT2046_Touchscreen.h>
 #include "audio.h"
 
 
@@ -11,6 +12,43 @@
 #define AZTOUCH_BEEPER 21
 #define AZTOUCH_TOUCH_CS 14
 #define AZTOUCH_TOUCH_IRQ 27
+
+XPT2046_Touchscreen touch(AZTOUCH_TOUCH_CS, AZTOUCH_TOUCH_IRQ);
+TS_Point touchPoint;
+
+// AZ-Touch MOD V01-03, 2.8" display only.
+// These are the proven fixed values from the AZ_TOUCH_MOD_BIG_TFT
+// branch of the Zihatec code-lock example. No user calibration needed.
+#define TOUCH_MIN_X     370
+#define TOUCH_MIN_Y     470
+#define TOUCH_MAX_X    3700
+#define TOUCH_MAX_Y    3600
+#define TOUCH_MIN_Z      10
+
+static bool touchWasDown = false;
+
+// Returns display pixel coordinates directly: x=0..319, y=0..239.
+// Uses the same fixed pressure threshold and raw limits as the proven
+// AZ-Touch MOD 2.8" code-lock example. No runtime calibration.
+static bool getTouchPixel(uint16_t &x, uint16_t &y) {
+    touchPoint = touch.getPoint();
+    delay(1);
+
+    if (touchPoint.z <= TOUCH_MIN_Z) return false;
+
+    // AZ_TOUCH_MOD_BIG_TFT raw conversion, adapted directly to
+    // the LCARS 320x240 landscape coordinate system.
+    long px = map((long)touchPoint.x, TOUCH_MIN_X, TOUCH_MAX_X, 320, 0);
+    long py = map((long)touchPoint.y, TOUCH_MIN_Y, TOUCH_MAX_Y, 240, 0);
+
+    px = constrain(px, 0L, 319L);
+    py = constrain(py, 0L, 239L);
+    x = (uint16_t)px;
+    y = (uint16_t)py;
+    return true;
+}
+
+
 
 
 // To get background image
@@ -152,7 +190,7 @@ void drawCountdownLeft(int days, int hours, int mins, int secs) {
 
   int x = 15;
   countdownSprite.setCursor(x,0);
-  countdownSprite.printf("%d.", days);
+  countdownSprite.printf("%02d.", days);
 
   colon=!colon;
   x+=80;
@@ -385,6 +423,7 @@ void setup()
   holtimeinfo.tm_mon=atoi(gMonth)-1;
   holtimeinfo.tm_year=atoi(gYear)-1900; 
   holtimeinfo.tm_isdst=-1;
+
   rawhol = mktime(&holtimeinfo);
 
   displayLines();
