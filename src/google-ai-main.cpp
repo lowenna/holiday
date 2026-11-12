@@ -456,7 +456,7 @@ void drawWhere(bool isArrived = false)
   t.fillSprite(TFT_BLACK);
   t.setTextDatum(MC_DATUM);
 
-  String displayText = isArrived ? ("TIME FOR " + String(gWhere) + "!") : String(gWhere);
+  String displayText = isArrived ? (String(gWhere) + "!") : String(gWhere);
 
 #ifdef LOAD_GFXFF
   t.setFreeFont(isArrived ? &FreeSansBold12pt7b : &FreeSansBold18pt7b);
@@ -1481,7 +1481,7 @@ void loop()
 
   if (inScreenSaver)
   {
-    if (freshTap)
+    if (freshTap || isArrived)
     {
       wakeFromScreenSaver(isArrived);
       lastRenderedSec = 0;
@@ -1489,9 +1489,9 @@ void loop()
     else
     {
       updateScreenSaverEyes(false);
+      yield();
+      return;
     }
-    yield();
-    return;
   }
 
   if (!isArrived && (millis() - lastInteractionMillis >= SCREENSAVER_TIMEOUT_MS))
