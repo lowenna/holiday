@@ -9,12 +9,22 @@
 #include <TFT_eSPI.h>
 #include <TJpg_Decoder.h>
 #include <XPT2046_Touchscreen.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include "audio.h"
 #include "maldives.h" // Hexdump of 320x240 JPG background
 
 #include <WebServer.h>
 #include <Update.h>
 #include <ESPmDNS.h>
+
+// Weather state & cached coordinates
+String weatherText = "";
+float cachedLat = 0.0f;
+float cachedLon = 0.0f;
+bool hasCachedCoords = false;
+unsigned long lastWeatherFetchMs = 0;
+constexpr unsigned long WEATHER_INTERVAL_MS = 1800000UL; // 30 minutes
 
 // Pre-baked 48x48 high-detail iris texture (~4.6 KB RAM) computed once at startup
 constexpr int IRIS_TEX_SIZE = 48;
@@ -57,7 +67,7 @@ constexpr int16_t BOT_TEXT_Y = 223;
 // ============================================================================
 // Blinking Eyes Screen Saver (Activates after SCREENSAVER_TIMEROUT_MS of no touch)
 // ============================================================================
-constexpr unsigned long SCREENSAVER_TIMEOUT_MS = 10000UL; // 5 mins is 300000UL
+constexpr unsigned long SCREENSAVER_TIMEOUT_MS = 300000UL * 12; // 5 mins is 300000UL
 bool inScreenSaver = false;
 unsigned long lastInteractionMillis = 0;
 
@@ -90,6 +100,30 @@ char gYear[5] = "2026";
 char gWhere[21] = "Maldives";
 
 time_t rawhol = 0;
+
+void drawWeatherBadge()
+{
+  if (weatherText.length() == 0)
+    return;
+
+  TFT_eSprite wSpr(&tft);
+  wSpr.setColorDepth(16);
+  wSpr.createSprite(180, 20);
+  wSpr.fillSprite(TFT_BLACK);
+
+  int textW = wSpr.textWidth(weatherText, 2);
+  int pillW = constrain(textW + 18, 60, 176);
+  int pillX = (180 - pillW) / 2;
+
+  wSpr.fillRoundRect(pillX, 1, pillW, 18, 8, TFT_NAVY);
+  wSpr.drawRoundRect(pillX, 1, pillW, 18, 8, TFT_CYAN);
+  wSpr.setTextDatum(MC_DATUM);
+  wSpr.setTextColor(TFT_WHITE, TFT_NAVY);
+  wSpr.drawString(weatherText, 90, 10, 2);
+
+  wSpr.pushSprite(70, WHERE_Y + 38, TFT_BLACK);
+  wSpr.deleteSprite();
+}
 
 // Fast 16-bit RGB565 linear colour blend (alpha: 0 = bg, 255 = fg)
 // Fixed 16-bit RGB565 linear colour blend using signed channel deltas (prevents yellow underflow)
@@ -396,16 +430,6 @@ void displayCurrentTimeSprite(time_t rawLocal)
   topTimeSprite.pushSprite(0, 0);
 }
 
-void displaySSIDAndWhen()
-{
-  tft.setTextColor(TFT_GREEN, TFT_BLACK);
-  tft.setTextDatum(TL_DATUM);
-  tft.drawString(WiFi.SSID(), 0, BOT_TEXT_Y, 2);
-
-  tft.setTextDatum(TR_DATUM);
-  tft.drawString(formatPrettyDateTime(rawhol), SCREEN_W - 1, BOT_TEXT_Y, 2);
-}
-
 void initSprites()
 {
   topTimeSprite.setColorDepth(8);
@@ -525,7 +549,7 @@ bool areWeConfiguring(bool mdnsOk)
   tft.fillRoundRect(22, 102, 276, 72, 8, TFT_NAVY);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_WHITE, TFT_NAVY);
-  tft.drawString("TAP SCREEN TO CONFIGURE", 160, 126, 2);
+  tft.drawString("Tap here to change WiFi/Holiday", 160, 126, 2);
   tft.setTextDatum(TL_DATUM);
 
   tft.setCursor(0, 220);
@@ -1190,6 +1214,60 @@ void updateScreenSaverEyes(bool forceInit = false)
   }
 }
 
+void drawWifiSignalBars(int x, int y)
+{
+  int32_t rssi = WiFi.RSSI();
+  int bars = 0;
+  uint16_t activeCol = TFT_GREEN;
+
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    if (rssi >= -55)
+    {
+      bars = 4;
+      activeCol = TFT_GREEN;
+    }
+    else if (rssi >= -67)
+    {
+      bars = 3;
+      activeCol = TFT_GREEN;
+    }
+    else if (rssi >= -78)
+    {
+      bars = 2;
+      activeCol = TFT_YELLOW;
+    }
+    else
+    {
+      bars = 1;
+      activeCol = TFT_RED;
+    }
+  }
+
+  tft.fillRect(x, y, 18, 14, TFT_BLACK);
+  for (int i = 0; i < 4; i++)
+  {
+    int barH = 3 + (i * 3);
+    int barX = x + (i * 4);
+    int barY = y + (13 - barH);
+    uint16_t col = (i < bars) ? activeCol : TFT_DARKGREY;
+    tft.fillRect(barX, barY, 3, barH, col);
+  }
+}
+
+void displaySSIDAndWhen()
+{
+  tft.fillRect(0, BOT_TEXT_Y, SCREEN_W, 16, TFT_BLACK);
+  drawWifiSignalBars(2, BOT_TEXT_Y + 1);
+
+  tft.setTextColor(TFT_GREEN, TFT_BLACK);
+  tft.setTextDatum(TL_DATUM);
+  tft.drawString(WiFi.SSID(), 22, BOT_TEXT_Y, 2);
+
+  tft.setTextDatum(TR_DATUM);
+  tft.drawString(formatPrettyDateTime(rawhol), SCREEN_W - 1, BOT_TEXT_Y, 2);
+}
+
 void wakeFromScreenSaver(bool isArrived)
 {
   inScreenSaver = false;
@@ -1198,6 +1276,106 @@ void wakeFromScreenSaver(bool isArrived)
   displaySSIDAndWhen();
   drawStaticBackgroundImage();
   drawWhere(isArrived);
+  drawWeatherBadge();
+}
+
+String wmoCodeToText(int code)
+{
+  if (code == 0)
+    return "Clear";
+  if (code <= 3)
+    return "Partly Cloudy";
+  if (code == 45 || code == 48)
+    return "Foggy";
+  if (code >= 51 && code <= 67)
+    return "Rain";
+  if (code >= 71 && code <= 77)
+    return "Snow";
+  if (code >= 80 && code <= 82)
+    return "Showers";
+  if (code >= 95)
+    return "Thunder";
+  return "Cloudy";
+}
+
+bool extractJsonNumber(const String &json, const String &key, float &outVal)
+{
+  int kPos = json.indexOf("\"" + key + "\":");
+  if (kPos < 0)
+    return false;
+  int start = kPos + key.length() + 3;
+  while (start < (int)json.length() && (json[start] == ' ' || json[start] == '['))
+    start++;
+  int end = start;
+  while (end < (int)json.length() && (isdigit(json[end]) || json[end] == '.' || json[end] == '-'))
+    end++;
+  if (end <= start)
+    return false;
+  outVal = json.substring(start, end).toFloat();
+  return true;
+}
+
+void fetchDestinationWeather()
+{
+  if (WiFi.status() != WL_CONNECTED)
+    return;
+
+  WiFiClientSecure client;
+  client.setInsecure(); // Skip root CA certificate bundle to save ~40KB RAM
+
+  HTTPClient http;
+  http.setTimeout(6000);
+
+  // Step 1: Resolve destination name (gWhere) to lat/lon once
+  if (!hasCachedCoords)
+  {
+    String query = String(gWhere);
+    query.trim();
+    query.replace(" ", "%20");
+
+    String geoUrl = "https://open-meteo.com" + query + "&count=1&format=json";
+    if (http.begin(client, geoUrl))
+    {
+      int code = http.GET();
+      if (code == HTTP_CODE_OK)
+      {
+        String geoPayload = http.getString();
+        if (extractJsonNumber(geoPayload, "latitude", cachedLat) &&
+            extractJsonNumber(geoPayload, "longitude", cachedLon))
+        {
+          hasCachedCoords = true;
+          Serial.printf("Geocoded '%s' -> %.4f, %.4f\n", gWhere, cachedLat, cachedLon);
+        }
+      }
+      http.end();
+    }
+  }
+
+  if (!hasCachedCoords)
+  {
+    Serial.printf("Could not geocode destination: %s\n", gWhere);
+    return;
+  }
+
+  // Step 2: Fetch live current weather at those coordinates
+  String wxUrl = "https://open-meteo.com" + String(cachedLat, 4) +
+                 "&longitude=" + String(cachedLon, 4) + "&current_weather=true";
+  if (http.begin(client, wxUrl))
+  {
+    int code = http.GET();
+    if (code == HTTP_CODE_OK)
+    {
+      String wxPayload = http.getString();
+      float tempC = 0.0f, wCode = 0.0f;
+      if (extractJsonNumber(wxPayload, "temperature", tempC) &&
+          extractJsonNumber(wxPayload, "weathercode", wCode))
+      {
+        weatherText = String((int)roundf(tempC)) + "C " + wmoCodeToText((int)wCode);
+        Serial.println("Updated destination weather: " + weatherText);
+      }
+    }
+    http.end();
+  }
 }
 
 // ============================================================================
@@ -1441,7 +1619,6 @@ void setup()
 
   Serial.println("setup() complete");
 }
-
 void loop()
 {
   static time_t lastRenderedSec = 0;
@@ -1520,6 +1697,7 @@ void loop()
       {
         holidayCelebrated = true;
         drawWhere(true);
+        drawWeatherBadge();
         playHolidayFanfare();
         lastReplayMillis = millis();
       }
@@ -1533,6 +1711,20 @@ void loop()
 
     drawCountdownLeft(diffDays, diffHours, diffMins, remSecs, blinkState, isArrived);
     displayCurrentTimeSprite(rawlocal);
+
+    // Refresh 4-bar Wi-Fi signal icon every 10 seconds
+    if (rawlocal % 10 == 0)
+    {
+      drawWifiSignalBars(2, BOT_TEXT_Y + 1);
+    }
+
+    // Refresh destination weather every 30 minutes
+    if (millis() - lastWeatherFetchMs >= WEATHER_INTERVAL_MS)
+    {
+      lastWeatherFetchMs = millis();
+      fetchDestinationWeather();
+      drawWeatherBadge();
+    }
   }
 
   delay(25);
