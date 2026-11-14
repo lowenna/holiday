@@ -32,7 +32,6 @@ extern void fetchDestinationWeather();   // weather.cpp
 constexpr uint8_t AZTOUCH_BEEPER = 21;
 constexpr uint8_t AZTOUCH_TOUCH_CS = 14;
 constexpr uint8_t AZTOUCH_TOUCH_IRQ = 27;
-constexpr uint8_t BOOT_BUTTON_PIN = 0;
 
 // AZ-Touch MOD V01-03, 2.8" display fixed calibration values
 constexpr int16_t TOUCH_MIN_X = 370;
