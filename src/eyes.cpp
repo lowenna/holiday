@@ -1,17 +1,4 @@
-// #include <WiFiManager.h>
-// #include <Preferences.h>
-// #include <WebServer.h>
-// #include <Update.h>
-// #include <ESPmDNS.h>
-// #include <ArduinoOTA.h>
-// #include <time.h>
-// #include <SPI.h>
 #include <TFT_eSPI.h>
-// #include <TJpg_Decoder.h>
-
-// #include <WebServer.h>
-// #include <Update.h>
-// #include <ESPmDNS.h>
 
 extern TFT_eSPI tft;
 
