@@ -381,7 +381,7 @@ void fetchDestinationWeather()
                    "/v1/forecast?latitude=" + String(cachedLat, 4) +
                    "&longitude=" + String(cachedLon, 4) +
                    "&current_weather=true&hourly=temperature_2m,weathercode,is_day&forecast_hours=9" +
-                   "&daily=weathercode,temperature_2m_max&forecast_days=9&timezone=auto";
+                   "&daily=weathercode,temperature_2m_max,precipitation_sum&forecast_days=9&timezone=auto";
     Serial.printf("[WX] Forecast URL: %s\n", wxUrl.c_str());
 
     if (http.begin(client, wxUrl))
@@ -390,6 +390,7 @@ void fetchDestinationWeather()
         if (code == HTTP_CODE_OK)
         {
             String wxPayload = http.getString();
+
             float utcOff = 0.0f;
             if (extractJsonNumber(wxPayload, "utc_offset_seconds", utcOff))
             {
@@ -404,6 +405,9 @@ void fetchDestinationWeather()
             String cwSection = (cwIdx >= 0) ? wxPayload.substring(cwIdx) : wxPayload;
 
             float tempC = 0.0f, wCode = 0.0f, isDayVal = 1.0f;
+            bool hasCurrent = false;
+            String baseCondText = "";
+
             if (extractJsonNumber(cwSection, "temperature", tempC) &&
                 extractJsonNumber(cwSection, "weathercode", wCode))
             {
@@ -411,8 +415,8 @@ void fetchDestinationWeather()
                 bool isDay = ((int)roundf(isDayVal) == 1);
 
                 weatherTempStr = String((int)roundf(tempC));
-                weatherCondStr = "C " + wmoCodeToText((int)wCode, isDay);
-                Serial.println("[WX] Updated destination weather: " + weatherTempStr + " deg " + weatherCondStr);
+                baseCondText = wmoCodeToText((int)wCode, isDay);
+                hasCurrent = true;
             }
 
             // 2. Parse next 8 hours
@@ -454,7 +458,8 @@ void fetchDestinationWeather()
                 }
             }
 
-            // 3. Parse next 8 days (index 0 is today, indices 1..8 are next 8 days)
+            // 3. Parse next 8 days + today's precipitation total (index 0)
+            float todayPrecipMm = 0.0f;
             String dyKey = String(char(34)) + "daily" + String(char(34)) + ":{";
             int dyIdx = wxPayload.indexOf(dyKey);
             if (dyIdx >= 0)
@@ -463,10 +468,17 @@ void fetchDestinationWeather()
                 std::array<String, 9> dayNames;
                 std::array<float, 9> dCodes = {};
                 std::array<float, 9> dTemps = {};
+                std::array<float, 9> dPrecip = {};
 
                 int nN = extractJsonDayNameArray(dySection, "time", dayNames.data(), 9);
                 int nC = extractJsonNumberArray(dySection, "weathercode", dCodes.data(), 9);
                 int nT = extractJsonNumberArray(dySection, "temperature_2m_max", dTemps.data(), 9);
+                int nP = extractJsonNumberArray(dySection, "precipitation_sum", dPrecip.data(), 9);
+
+                if (nP >= 1)
+                {
+                    todayPrecipMm = dPrecip.at(0);
+                }
 
                 int available = min(nN, min(nC, nT));
                 int startOffset = (available >= 9) ? 1 : 0;
@@ -479,7 +491,7 @@ void fetchDestinationWeather()
                         dailyForecast.at(i).label = dayNames.at(src);
                         dailyForecast.at(i).tempC = (int)roundf(dTemps.at(src));
                         dailyForecast.at(i).wmoCode = (int)roundf(dCodes.at(src));
-                        dailyForecast.at(i).isDay = true; // Daytime icon for daily forecast
+                        dailyForecast.at(i).isDay = true;
                         dailyForecast.at(i).valid = true;
                         hasDailyForecast = true;
                     }
@@ -488,6 +500,24 @@ void fetchDestinationWeather()
                         dailyForecast.at(i).valid = false;
                     }
                 }
+            }
+
+            // Build final condition string with optional "(X mm)" rain total due today
+            if (hasCurrent)
+            {
+                String precipSuffix = "";
+                int roundedMm = (int)roundf(todayPrecipMm);
+                if (roundedMm >= 1)
+                {
+                    precipSuffix = " (" + String(roundedMm) + " mm)";
+                }
+                else if (todayPrecipMm > 0.1f)
+                {
+                    precipSuffix = " (<1 mm)";
+                }
+
+                weatherCondStr = "C " + baseCondText + precipSuffix;
+                Serial.println("[WX] Updated destination weather: " + weatherTempStr + " deg " + weatherCondStr);
             }
         }
         else
