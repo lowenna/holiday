@@ -1099,9 +1099,16 @@ void displaySSIDAndWhen()
     tft.drawString(WiFi.SSID(), 23, BOT_TEXT_Y, 2);
   }
 
-  tft.setTextColor(TFT_GREEN, TFT_BLACK);
-  tft.setTextDatum(TR_DATUM);
-  tft.drawString(formatPrettyDateTime(rawhol), SCREEN_W - 1, BOT_TEXT_Y, 2);
+  // Only show target holiday date/time on the bottom right if the countdown hasn't elapsed yet
+  time_t nowEpoch = time(nullptr);
+  bool timerElapsed = (nowEpoch > 1700000000L) && (difftime(rawhol, nowEpoch) <= 0);
+
+  if (!timerElapsed)
+  {
+    tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    tft.setTextDatum(TR_DATUM);
+    tft.drawString(formatPrettyDateTime(rawhol), SCREEN_W - 1, BOT_TEXT_Y, 2);
+  }
   tft.setTextDatum(TL_DATUM);
 }
 

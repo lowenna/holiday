@@ -14,8 +14,8 @@ int16_t WHERE_Y = 40;
 int16_t WHERE_H = 26;
 
 static constexpr int16_t WX_SCREEN_W = 320;
-static constexpr int16_t HOURLY_Y = 98;
-static constexpr int16_t HOURLY_H = 44;
+static constexpr int16_t HOURLY_Y = 94;
+static constexpr int16_t HOURLY_H = 52;
 
 String weatherTempStr = "";
 String weatherCondStr = "";
@@ -33,6 +33,7 @@ struct ForecastSlot
     int tempC;
     int wmoCode;
     bool isDay;
+    float precipMm;
     bool valid;
 };
 
@@ -257,7 +258,6 @@ void drawHourlyForecastBar()
     const int slotW = 38;
     const int startX = 8;
 
-    // Gold border & header text in Daily mode; Cyan border & header text in Hourly mode
     uint16_t borderCol = activeDaily ? TFT_GOLD : TFT_DARKCYAN;
     uint16_t labelCol = activeDaily ? TFT_YELLOW : TFT_CYAN;
 
@@ -276,19 +276,31 @@ void drawHourlyForecastBar()
         hSpr.fillRoundRect(sx + 1, 0, slotW - 2, HOURLY_H, 5, TFT_NAVY);
         hSpr.drawRoundRect(sx + 1, 0, slotW - 2, HOURLY_H, 5, borderCol);
 
+        // 1. Header label ("17h" or "Mon")
         hSpr.setTextColor(labelCol, TFT_NAVY);
-        hSpr.drawString(slots.at(i).label, cx, 3, 1);
+        hSpr.drawString(slots.at(i).label, cx, 2, 1);
 
-        drawMiniWeatherIcon(hSpr, cx, 20, slots.at(i).wmoCode, slots.at(i).isDay);
+        // 2. Weather icon
+        drawMiniWeatherIcon(hSpr, cx, 17, slots.at(i).wmoCode, slots.at(i).isDay);
 
+        // 3. Temperature + tiny degree dot ("27°")
         String tStr = String(slots.at(i).tempC);
         int tw = hSpr.textWidth(tStr, 1);
         int tx = cx - ((tw + 3) / 2);
         hSpr.setTextDatum(TL_DATUM);
         hSpr.setTextColor(TFT_WHITE, TFT_NAVY);
-        hSpr.drawString(tStr, tx, 33, 1);
-        hSpr.drawCircle(tx + tw + 1, 34, 1, TFT_WHITE);
+        hSpr.drawString(tStr, tx, 28, 1);
+        hSpr.drawCircle(tx + tw + 1, 29, 1, TFT_WHITE);
         hSpr.setTextDatum(TC_DATUM);
+
+        // 4. Optional rainfall "5mm" on rainy days in 8-day view
+        if (activeDaily && slots.at(i).precipMm > 0.1f)
+        {
+            int roundedMm = (int)roundf(slots.at(i).precipMm);
+            String pStr = (roundedMm >= 1) ? (String(roundedMm) + "mm") : "<1mm";
+            hSpr.setTextColor(TFT_CYAN, TFT_NAVY);
+            hSpr.drawString(pStr, cx, 40, 1);
+        }
     }
 
     hSpr.pushSprite(0, HOURLY_Y);
@@ -381,7 +393,7 @@ void fetchDestinationWeather()
                    "/v1/forecast?latitude=" + String(cachedLat, 4) +
                    "&longitude=" + String(cachedLon, 4) +
                    "&current_weather=true&hourly=temperature_2m,weathercode,is_day&forecast_hours=9" +
-                   "&daily=weathercode,temperature_2m_max,precipitation_sum&forecast_days=9&timezone=auto";
+                   "&daily=weathercode,temperature_2m_max,precipitation_sum&forecast_days=8&timezone=auto";
     Serial.printf("[WX] Forecast URL: %s\n", wxUrl.c_str());
 
     if (http.begin(client, wxUrl))
@@ -448,6 +460,7 @@ void fetchDestinationWeather()
                         hourlyForecast.at(i).tempC = (int)roundf(temps.at(src));
                         hourlyForecast.at(i).wmoCode = (int)roundf(codes.at(src));
                         hourlyForecast.at(i).isDay = ((int)roundf(days.at(src)) == 1);
+                        hourlyForecast.at(i).precipMm = 0.0f;
                         hourlyForecast.at(i).valid = true;
                         hasHourlyForecast = true;
                     }
@@ -458,7 +471,7 @@ void fetchDestinationWeather()
                 }
             }
 
-            // 3. Parse next 8 days + today's precipitation total (index 0)
+            // 3. Parse 8 days starting from today (index 0) + daily precipitation totals
             float todayPrecipMm = 0.0f;
             String dyKey = String(char(34)) + "daily" + String(char(34)) + ":{";
             int dyIdx = wxPayload.indexOf(dyKey);
@@ -481,17 +494,16 @@ void fetchDestinationWeather()
                 }
 
                 int available = min(nN, min(nC, nT));
-                int startOffset = (available >= 9) ? 1 : 0;
 
                 for (int i = 0; i < 8; i++)
                 {
-                    int src = i + startOffset;
-                    if (src < available)
+                    if (i < available)
                     {
-                        dailyForecast.at(i).label = dayNames.at(src);
-                        dailyForecast.at(i).tempC = (int)roundf(dTemps.at(src));
-                        dailyForecast.at(i).wmoCode = (int)roundf(dCodes.at(src));
+                        dailyForecast.at(i).label = dayNames.at(i);
+                        dailyForecast.at(i).tempC = (int)roundf(dTemps.at(i));
+                        dailyForecast.at(i).wmoCode = (int)roundf(dCodes.at(i));
                         dailyForecast.at(i).isDay = true;
+                        dailyForecast.at(i).precipMm = (i < nP) ? dPrecip.at(i) : 0.0f;
                         dailyForecast.at(i).valid = true;
                         hasDailyForecast = true;
                     }
