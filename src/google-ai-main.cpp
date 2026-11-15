@@ -509,13 +509,13 @@ void drawCountdownLeft(int days, int hours, int mins, int secs, bool showColon, 
 
   if (isArrived)
   {
-    // Once arrived, show live local time at the destination in gold (HH:MM:SS)
+    // Once arrived, show live local time at the destination in crisp cyan (HH:MM:SS)
     time_t destEpoch = hasDestUtcOffset ? (rawlocal + destUtcOffsetSec) : rawlocal;
     struct tm destTm;
     gmtime_r(&destEpoch, &destTm);
 
     char sep = showColon ? ':' : ' ';
-    countdownFgSprite.setTextColor(TFT_GOLD);
+    countdownFgSprite.setTextColor(TFT_DARKCYAN);
     countdownFgSprite.setCursor(54, 0);
     countdownFgSprite.printf("%02d%c", destTm.tm_hour, sep);
     countdownFgSprite.setCursor(132, 0);
@@ -1117,6 +1117,86 @@ void wakeFromScreenSaver(bool isArrived)
 }
 
 // ============================================================================
+// Automatic Nighttime Backlight Dimming (Smooth 30s PWM Fade)
+// ============================================================================
+#ifndef TFT_BL
+constexpr uint8_t TFT_BL_PIN = 15; // AZ-Touch MOD default backlight GPIO
+#else
+constexpr uint8_t TFT_BL_PIN = TFT_BL;
+#endif
+
+constexpr uint8_t BL_PWM_CHANNEL = 0;
+constexpr uint8_t BL_BRIGHT_DAY = 0;           // Active-LOW: 0 = 100% full brightness
+constexpr uint8_t BL_BRIGHT_NIGHT = 246;       // Active-LOW: 246 = ~3.5% very dim night mode
+constexpr unsigned long BL_BOOST_MS = 15000UL; // Hold full brightness for 15s after touch
+constexpr unsigned long BL_FADE_MS = 30000UL;  // Fade gradually over 30 seconds
+
+unsigned long lastBacklightBoostMs = 0;
+uint8_t currentBacklightLevel = BL_BRIGHT_DAY;
+
+void initBacklightPWM()
+{
+  ledcSetup(BL_PWM_CHANNEL, 5000, 8); // 5 kHz, 8-bit resolution (0..255)
+  ledcAttachPin(TFT_BL_PIN, BL_PWM_CHANNEL);
+  ledcWrite(BL_PWM_CHANNEL, BL_BRIGHT_DAY);
+  currentBacklightLevel = BL_BRIGHT_DAY;
+}
+
+void updateAutoBacklight(time_t rawlocal, const struct tm &ukTm)
+{
+  int hour = ukTm.tm_hour;
+  int minute = ukTm.tm_min;
+
+  // Use destination local time when available
+  if (hasDestUtcOffset)
+  {
+    time_t destEpoch = rawlocal + destUtcOffsetSec;
+    struct tm destTm;
+    gmtime_r(&destEpoch, &destTm);
+    hour = destTm.tm_hour;
+    minute = destTm.tm_min;
+  }
+
+  int minsOfDay = (hour * 60) + minute;
+  // Nighttime window at destination: 22:30 through 06:59
+  bool isNight = (minsOfDay >= (22 * 60 + 30)) || (minsOfDay < (7 * 60));
+
+  uint8_t targetLevel = BL_BRIGHT_DAY;
+
+  if (isNight)
+  {
+    unsigned long now = millis();
+    if (lastBacklightBoostMs == 0)
+    {
+      lastBacklightBoostMs = now;
+    }
+
+    unsigned long sinceTouch = now - lastBacklightBoostMs;
+    if (sinceTouch < BL_BOOST_MS)
+    {
+      // Hold at 100% brightness for 15s after boot or touch
+      targetLevel = BL_BRIGHT_DAY;
+    }
+    else if (sinceTouch < (BL_BOOST_MS + BL_FADE_MS))
+    {
+      // Gradually fade from BL_BRIGHT_DAY (0) to BL_BRIGHT_NIGHT (246) over 30 seconds
+      unsigned long fadeElapsed = sinceTouch - BL_BOOST_MS;
+      targetLevel = (uint8_t)map((long)fadeElapsed, 0L, (long)BL_FADE_MS, (long)BL_BRIGHT_DAY, (long)BL_BRIGHT_NIGHT);
+    }
+    else
+    {
+      targetLevel = BL_BRIGHT_NIGHT;
+    }
+  }
+
+  if (targetLevel != currentBacklightLevel)
+  {
+    currentBacklightLevel = targetLevel;
+    ledcWrite(BL_PWM_CHANNEL, currentBacklightLevel);
+  }
+}
+
+// ============================================================================
 // Setup & Loop
 // ============================================================================
 void setup()
@@ -1133,6 +1213,7 @@ void setup()
 
   // Initialize display & touchscreen
   tft.init();
+  initBacklightPWM();
   tft.setRotation(1);
   tft.fillScreen(TFT_BLACK);
   tft.setSwapBytes(true);
@@ -1294,6 +1375,7 @@ void setup()
   lastWeatherFetchMs = millis();
 
   lastInteractionMillis = millis();
+  lastBacklightBoostMs = millis();
 
   Serial.println("setup() complete");
 }
@@ -1405,7 +1487,11 @@ void loop()
   if (touching)
   {
     lastInteractionMillis = millis();
+    lastBacklightBoostMs = millis();
   }
+
+  // Smoothly update PWM backlight every loop tick (~40 Hz)
+  updateAutoBacklight(rawlocal, timeinfo);
 
   if (inScreenSaver)
   {
