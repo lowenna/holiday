@@ -1,4 +1,5 @@
 #include <WiFiManager.h>
+#include <esp_wifi.h>
 #include <Preferences.h>
 #include <WebServer.h>
 #include <Update.h>
@@ -13,10 +14,7 @@
 #include <WiFiClientSecure.h>
 #include "audio.h"
 #include "maldives.h" // Hexdump of 320x240 JPG background
-
-#include <WebServer.h>
-#include <Update.h>
-#include <ESPmDNS.h>
+#include "NotoSansBold36.h"
 
 char otaHostname[24];
 WebServer otaServer(80);
@@ -89,6 +87,7 @@ char gDay[3] = "05";
 char gMonth[3] = "12";
 char gYear[5] = "2026";
 char gWhere[21] = "Maldives";
+bool gScreensaverEnabled = true;
 
 time_t rawhol = 0;
 
@@ -227,10 +226,6 @@ const char *otaIndexHtml = R"rawliteral(
 
 bool setupOTA()
 {
-  uint64_t chipId = ESP.getEfuseMac();
-  uint16_t shortId = (uint16_t)(chipId >> 32);
-  snprintf(otaHostname, sizeof(otaHostname), "holiday-%04x", shortId);
-
   bool mdnsOk = MDNS.begin(otaHostname);
   if (mdnsOk)
   {
@@ -399,48 +394,86 @@ void drawStaticBackgroundImage()
 }
 
 // Decoder callback for redrawing the 320x38 background slice behind the destination text
+// Global pointer so the JPEG decoder callback can draw the background slice straight into our sprite
+static TFT_eSprite *gWhereBgSpritePtr = nullptr;
+
 bool tftOutputWhereBg(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t *bitmap)
 {
-  if (y >= 38)
+  if (y >= 42 || gWhereBgSpritePtr == nullptr)
     return false;
-  tft.pushImage(x, WHERE_Y + y, w, h, bitmap);
+  gWhereBgSpritePtr->pushImage(x, y, w, h, bitmap);
   return true;
 }
 
 void drawWhere(bool isArrived = false)
 {
-  const int16_t bannerH = 38;
+  const int16_t bannerH = 42;
 
-  // Repaint the background slice first when arriving so old letters are wiped cleanly
-  if (isArrived)
-  {
-    TJpgDec.setCallback(tftOutputWhereBg);
-    TJpgDec.drawJpg(0, BG_IMAGE_Y - WHERE_Y, maldives__esp32__jpg, sizeof(maldives__esp32__jpg));
-  }
+  // 1. Create a 16-bit sprite and decode the exact Maldives photo slice into it first
+  TFT_eSprite bg(&tft);
+  bg.setColorDepth(16);
+  bg.createSprite(SCREEN_W, bannerH);
+  bg.setSwapBytes(true);
+  bg.fillSprite(TFT_BLACK);
 
-  TFT_eSprite t(&tft);
-  t.createSprite(SCREEN_W, bannerH);
-  t.fillSprite(TFT_BLACK);
-  t.setTextDatum(MC_DATUM);
+  gWhereBgSpritePtr = &bg;
+  TJpgDec.setCallback(tftOutputWhereBg);
+  TJpgDec.drawJpg(0, BG_IMAGE_Y - WHERE_Y, maldives__esp32__jpg, sizeof(maldives__esp32__jpg));
+  gWhereBgSpritePtr = nullptr;
 
   String displayText = isArrived ? (String(gWhere) + "!") : String(gWhere);
+  bg.setTextDatum(MC_DATUM);
 
-#ifdef LOAD_GFXFF
-  t.setFreeFont(isArrived ? &FreeSansBold12pt7b : &FreeSansBold18pt7b);
+#ifdef SMOOTH_FONT
+  // Load anti-aliased smooth font; TFT_eSPI automatically blends edges against existing sprite pixels
+  bg.loadFont(NotoSansBold36);
+
+  // Draw anti-aliased drop shadow, then anti-aliased foreground text
+  bg.setTextColor(TFT_NAVY, TFT_BLACK, false);
+  bg.drawString(displayText, (SCREEN_W / 2) + 2, 22);
+
+  bg.setTextColor(isArrived ? TFT_GOLD : TFT_WHITE, TFT_BLACK, false);
+  bg.drawString(displayText, SCREEN_W / 2, 20);
+
+  bg.unloadFont();
 #else
-  t.setTextFont(2);
-  t.setTextSize(2);
+  bg.setFreeFont(isArrived ? &FreeSansBold12pt7b : &FreeSansBold18pt7b);
+  bg.setTextColor(TFT_NAVY);
+  bg.drawString(displayText, (SCREEN_W / 2) + 2, 22);
+  bg.setTextColor(isArrived ? TFT_GOLD : TFT_WHITE);
+  bg.drawString(displayText, SCREEN_W / 2, 20);
 #endif
 
-  // Slightly higher vertical centre (y = 16, shadow = 18) so bottom edges never clip
-  t.setTextColor(TFT_NAVY);
-  t.drawString(displayText, (SCREEN_W / 2) + 2, 18);
-  t.setTextColor(isArrived ? TFT_GOLD : TFT_WHITE);
-  t.drawString(displayText, SCREEN_W / 2, 16);
-
-  t.pushSprite(0, WHERE_Y, TFT_BLACK);
-  t.deleteSprite();
+  bg.pushSprite(0, WHERE_Y);
+  bg.deleteSprite();
 }
+
+/*
+// Helper to blend two RGB565 colors by alpha (0..255)
+static inline uint16_t blendRGB565(uint16_t bg, uint16_t fg, uint8_t alpha)
+{
+  if (alpha == 0)
+    return bg;
+  if (alpha == 255)
+    return fg;
+
+  uint8_t bgR = (bg >> 11) & 0x1F;
+  uint8_t bgG = (bg >> 5) & 0x3F;
+  uint8_t bgB = bg & 0x1F;
+
+  uint8_t fgR = (fg >> 11) & 0x1F;
+  uint8_t fgG = (fg >> 5) & 0x3F;
+  uint8_t fgB = fg & 0x1F;
+
+  uint8_t r = bgR + (((int)(fgR - bgR) * alpha) >> 8);
+  uint8_t g = bgG + (((int)(fgG - bgG) * alpha) >> 8);
+  uint8_t b = bgB + (((int)(fgB - bgB) * alpha) >> 8);
+
+  return (r << 11) | (g << 5) | b;
+}
+
+*/
+
 void drawCountdownLeft(int days, int hours, int mins, int secs, bool showColon, bool isArrived)
 {
   countdownBgSprite.pushToSprite(&countdownFgSprite, 0, 0);
@@ -471,31 +504,76 @@ void saveConfigCallback()
   Serial.println("WiFiManager config changed; flagging for NVS save.");
   shouldSaveConfig = true;
 }
+void drawScreensaverToggleButton()
+{
+  const int16_t rowX = 20;
+  const int16_t rowY = 148;
+  const int16_t rowW = 280;
+  const int16_t rowH = 30;
+
+  // Clear row area cleanly
+  tft.fillRect(rowX, rowY, rowW, rowH, TFT_BLACK);
+
+  // Label on the left
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.drawString("Screensaver:", rowX + 6, rowY + (rowH / 2), 2);
+
+  // Status text ("ON" / "OFF")
+  tft.setTextDatum(MR_DATUM);
+  tft.setTextColor(gScreensaverEnabled ? TFT_GREEN : TFT_RED, TFT_BLACK);
+  tft.drawString(gScreensaverEnabled ? "ON" : "OFF", rowX + rowW - 64, rowY + (rowH / 2), 2);
+  tft.setTextDatum(TL_DATUM);
+
+  // Compact sliding pill switch on the right (52x22)
+  const int16_t swW = 52;
+  const int16_t swH = 22;
+  const int16_t swX = rowX + rowW - swW - 4;
+  const int16_t swY = rowY + (rowH - swH) / 2;
+
+  uint16_t trackCol = gScreensaverEnabled ? TFT_DARKGREEN : TFT_DARKGREY;
+  uint16_t borderCol = gScreensaverEnabled ? TFT_GREEN : TFT_LIGHTGREY;
+
+  tft.fillRoundRect(swX, swY, swW, swH, swH / 2, trackCol);
+  tft.drawRoundRect(swX, swY, swW, swH, swH / 2, borderCol);
+
+  // Sliding circular knob
+  int16_t knobR = 8;
+  int16_t knobY = swY + (swH / 2);
+  int16_t knobX = gScreensaverEnabled ? (swX + swW - knobR - 3) : (swX + knobR + 3);
+  tft.fillCircle(knobX, knobY, knobR, TFT_WHITE);
+}
+
 bool areWeConfiguring(bool mdnsOk)
 {
   unsigned long startAt = millis();
   bool triggered = false;
   int lastSecsLeft = -1;
+  bool wasTouching = false;
 
   tft.fillScreen(TFT_BLACK);
   tft.setTextFont(2);
   tft.setTextSize(1);
-  tft.setCursor(0, 6);
+  tft.setCursor(4, 4);
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
-  tft.println("To update firmware, go to one of:");
+  tft.println("To update firmware, browse to:");
   tft.setTextColor(TFT_GREEN, TFT_BLACK);
   if (mdnsOk)
     tft.println("  http://" + String(otaHostname) + ".local");
   tft.println("  http://" + WiFi.localIP().toString());
 
-  tft.drawRoundRect(20, 100, 280, 76, 10, TFT_CYAN);
-  tft.fillRoundRect(22, 102, 276, 72, 8, TFT_NAVY);
+  // Main Wi-Fi / Holiday Config Button (y = 66 to 132)
+  tft.drawRoundRect(20, 66, 280, 66, 10, TFT_CYAN);
+  tft.fillRoundRect(22, 68, 276, 62, 8, TFT_NAVY);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_WHITE, TFT_NAVY);
-  tft.drawString("Tap here to change WiFi/Holiday", 160, 126, 2);
+  tft.drawString("Tap here to change WiFi/Holiday", 160, 86, 2);
   tft.setTextDatum(TL_DATUM);
 
-  tft.setCursor(0, 220);
+  // Compact Screensaver Toggle Switch Row (y = 148 to 178)
+  drawScreensaverToggleButton();
+
+  tft.setCursor(4, 220);
   tft.setTextColor(TFT_YELLOW, TFT_BLACK);
   tft.print("(C) John Howard 2026");
 
@@ -506,14 +584,38 @@ bool areWeConfiguring(bool mdnsOk)
     if (secsLeft != lastSecsLeft)
     {
       lastSecsLeft = secsLeft;
-      tft.fillRect(40, 142, 240, 22, TFT_NAVY);
+      tft.fillRect(40, 100, 240, 22, TFT_NAVY);
       tft.setTextDatum(MC_DATUM);
       tft.setTextColor(TFT_YELLOW, TFT_NAVY);
-      tft.drawString("Starting in " + String(secsLeft) + "s...", 160, 152, 2);
+      tft.drawString("Starting in " + String(secsLeft) + "s...", 160, 110, 2);
       tft.setTextDatum(TL_DATUM);
     }
-    if (getTouchPixel(tx, ty))
-      triggered = true;
+
+    bool touching = getTouchPixel(tx, ty);
+    if (touching && !wasTouching)
+    {
+      // Tap anywhere on the Screensaver toggle row (y = 144..182)
+      if (tx >= 20 && tx <= 300 && ty >= 144 && ty <= 182)
+      {
+        gScreensaverEnabled = !gScreensaverEnabled;
+        prefs.begin("hol", false);
+        prefs.putBool("ssaver", gScreensaverEnabled);
+        prefs.end();
+
+        drawScreensaverToggleButton();
+        tone(AZTOUCH_BEEPER, gScreensaverEnabled ? 880 : 440, 80);
+
+        // Reset countdown timer so user can clearly see the updated toggle state
+        startAt = millis();
+        lastSecsLeft = -1;
+      }
+      // Tap the WiFi/Holiday Config Button (y = 66..132)
+      else if (tx >= 20 && tx <= 300 && ty >= 66 && ty <= 132)
+      {
+        triggered = true;
+      }
+    }
+    wasTouching = touching;
     delay(25);
   }
 
@@ -521,31 +623,25 @@ bool areWeConfiguring(bool mdnsOk)
   return triggered;
 }
 
-void readPreferences()
+// ============================================================================
+// Hostname, Preferences & Boot Status Display
+// ============================================================================
+enum PrefStatus
 {
-  // Open in read/write mode (false) so NVS doesn't fail if the namespace hasn't been initialized yet
-  prefs.begin("hol", false);
-  String lHour = prefs.getString("hour", "");
-  String lMins = prefs.getString("mins", "");
-  String lDay = prefs.getString("day", "");
-  String lMonth = prefs.getString("month", "");
-  String lYear = prefs.getString("year", "");
-  String lWhere = prefs.getString("where", "");
-  prefs.end();
-  if (lHour.length() > 0)
-    strlcpy(gHour, lHour.c_str(), sizeof(gHour));
-  if (lMins.length() > 0)
-    strlcpy(gMins, lMins.c_str(), sizeof(gMins));
-  if (lDay.length() > 0)
-    strlcpy(gDay, lDay.c_str(), sizeof(gDay));
-  if (lMonth.length() > 0)
-    strlcpy(gMonth, lMonth.c_str(), sizeof(gMonth));
-  if (lYear.length() > 0)
-    strlcpy(gYear, lYear.c_str(), sizeof(gYear));
-  if (lWhere.length() > 0)
-    strlcpy(gWhere, lWhere.c_str(), sizeof(gWhere));
-  Serial.printf("Pref: At %s:%s on %s/%s/%s - %s\n", gHour, gMins, gDay, gMonth, gYear, gWhere);
+  PREF_NOT_CONFIGURED,
+  PREF_INVALID,
+  PREF_VALID
+};
+
+PrefStatus gPrefStatus = PREF_NOT_CONFIGURED;
+
+void initHostname()
+{
+  uint64_t chipId = ESP.getEfuseMac();
+  uint16_t shortId = (uint16_t)(chipId >> 32);
+  snprintf(otaHostname, sizeof(otaHostname), "holiday-%04x", shortId);
 }
+
 bool isValidDateTime(int hour, int mins, int day, int month, int year)
 {
   if (hour < 0 || hour > 23)
@@ -559,6 +655,277 @@ bool isValidDateTime(int hour, int mins, int day, int month, int year)
   if (year < 2024 || year > 2100)
     return false;
   return true;
+}
+
+void readPreferences()
+{
+  // Open in read/write mode (false) so NVS doesn't fail if the namespace hasn't been initialized yet
+  prefs.begin("hol", false);
+  String lHour = prefs.getString("hour", "");
+  String lMins = prefs.getString("mins", "");
+  String lDay = prefs.getString("day", "");
+  String lMonth = prefs.getString("month", "");
+  String lYear = prefs.getString("year", "");
+  String lWhere = prefs.getString("where", "");
+  gScreensaverEnabled = prefs.getBool("ssaver", true);
+  prefs.end();
+
+  if (lHour.length() == 0 && lMins.length() == 0 && lDay.length() == 0 &&
+      lMonth.length() == 0 && lYear.length() == 0 && lWhere.length() == 0)
+  {
+    gPrefStatus = PREF_NOT_CONFIGURED;
+    Serial.println("Pref: Not yet configured");
+    return;
+  }
+
+  if (lHour.length() == 0 || lMins.length() == 0 || lDay.length() == 0 ||
+      lMonth.length() == 0 || lYear.length() == 0 ||
+      !isValidDateTime(lHour.toInt(), lMins.toInt(), lDay.toInt(), lMonth.toInt(), lYear.toInt()))
+  {
+    gPrefStatus = PREF_INVALID;
+    Serial.println("Pref: Invalid settings found in NVS!");
+    return;
+  }
+
+  strlcpy(gHour, lHour.c_str(), sizeof(gHour));
+  strlcpy(gMins, lMins.c_str(), sizeof(gMins));
+  strlcpy(gDay, lDay.c_str(), sizeof(gDay));
+  strlcpy(gMonth, lMonth.c_str(), sizeof(gMonth));
+  strlcpy(gYear, lYear.c_str(), sizeof(gYear));
+  if (lWhere.length() > 0)
+  {
+    strlcpy(gWhere, lWhere.c_str(), sizeof(gWhere));
+  }
+
+  gPrefStatus = PREF_VALID;
+  Serial.printf("Pref: At %s:%s on %s/%s/%s - %s\n", gHour, gMins, gDay, gMonth, gYear, gWhere);
+}
+
+String getSavedWifiSSID()
+{
+  wifi_config_t conf;
+  if (esp_wifi_get_config(WIFI_IF_STA, &conf) == ESP_OK)
+  {
+    const char *ssid = reinterpret_cast<const char *>(conf.sta.ssid);
+    if (ssid[0] != '\0')
+    {
+      return String(ssid);
+    }
+  }
+  return "";
+}
+
+void drawBootWelcomeScreen(const String &savedSsid)
+{
+  tft.fillScreen(TFT_BLACK);
+
+  // Welcome Header Bar
+  tft.fillRect(0, 0, SCREEN_W, 28, TFT_NAVY);
+  tft.drawFastHLine(0, 28, SCREEN_W, TFT_CYAN);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_WHITE, TFT_NAVY);
+  tft.drawString("WELCOME - HOLIDAY COUNTDOWN", SCREEN_W / 2, 14, 2);
+
+  // Preferences Card
+  tft.drawRoundRect(8, 36, SCREEN_W - 16, 94, 8, TFT_DARKCYAN);
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextFont(2);
+  tft.setTextSize(1);
+
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  tft.setCursor(16, 42);
+  tft.print("Holiday Preferences:");
+
+  if (gPrefStatus == PREF_VALID)
+  {
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setCursor(16, 64);
+    tft.printf("Destination: %s", gWhere);
+
+    tft.setCursor(16, 84);
+    tft.printf("Departure:   %s/%s/%s at %s:%s", gDay, gMonth, gYear, gHour, gMins);
+
+    tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    tft.setCursor(16, 104);
+    tft.print("Status: Configured");
+  }
+  else if (gPrefStatus == PREF_NOT_CONFIGURED)
+  {
+    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+    tft.setCursor(16, 68);
+    tft.print("Status: Not yet configured");
+
+    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    tft.setCursor(16, 92);
+    tft.printf("Fallback default: %s (%s/%s/%s)", gWhere, gDay, gMonth, gYear);
+  }
+  else
+  {
+    tft.setTextColor(TFT_RED, TFT_BLACK);
+    tft.setCursor(16, 68);
+    tft.print("Status: Invalid settings found");
+
+    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    tft.setCursor(16, 92);
+    tft.print("Please reconfigure in setup portal");
+  }
+
+  // Wi-Fi Connection Status Card
+  tft.drawRoundRect(8, 138, SCREEN_W - 16, 92, 8, TFT_DARKGREY);
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  tft.setCursor(16, 146);
+  tft.print("Wi-Fi Status:");
+
+  if (savedSsid.length() > 0)
+  {
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setCursor(16, 168);
+    tft.print("Attempting to connect to: ");
+    tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    tft.print(savedSsid);
+
+    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    tft.setCursor(16, 192);
+    tft.print("Please wait...");
+  }
+  else
+  {
+    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+    tft.setCursor(16, 168);
+    tft.print("No saved Wi-Fi network found.");
+
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setCursor(16, 192);
+    tft.printf("Starting hotspot %s...", otaHostname);
+  }
+}
+
+void drawSetupPortalScreen(const String &apName, bool showTimeoutHint)
+{
+  tft.fillScreen(TFT_BLACK);
+
+  // Header bar
+  tft.fillRect(0, 0, SCREEN_W, 26, TFT_NAVY);
+  tft.drawFastHLine(0, 26, SCREEN_W, TFT_CYAN);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_WHITE, TFT_NAVY);
+  tft.drawString("SETUP MODE - WI-FI & HOLIDAY", SCREEN_W / 2, 13, 2);
+
+  // Styled instruction card
+  tft.drawRoundRect(8, 34, 304, 174, 8, TFT_DARKCYAN);
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextFont(2);
+  tft.setTextSize(1);
+
+  int y = 42;
+  const int step = 22;
+
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  tft.setCursor(16, y);
+  tft.print("1.");
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.print(" Open Wi-Fi settings on your phone");
+  y += step;
+
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  tft.setCursor(16, y);
+  tft.print("2.");
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.print(" Connect to ");
+  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+  tft.print(apName);
+  y += step;
+
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  tft.setCursor(16, y);
+  tft.print("3.");
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.print(" Wait for portal (or browse ");
+  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+  tft.print("192.168.4.1");
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.print(")");
+  y += step;
+
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  tft.setCursor(16, y);
+  tft.print("4.");
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.print(" Tap ");
+  tft.setTextColor(TFT_GREEN, TFT_BLACK);
+  tft.print("Configure WiFi");
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.print(" & pick network");
+  y += step;
+
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  tft.setCursor(16, y);
+  tft.print("5.");
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.print(" Enter Wi-Fi password & holiday info");
+  y += step;
+
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  tft.setCursor(16, y);
+  tft.print("6.");
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.print(" Scroll down and tap ");
+  tft.setTextColor(TFT_GREEN, TFT_BLACK);
+  tft.print("Save");
+
+  if (showTimeoutHint)
+  {
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(TFT_SILVER, TFT_BLACK);
+    tft.drawString("Portal timeout: 10 minutes", SCREEN_W / 2, 224, 2);
+    tft.setTextDatum(TL_DATUM);
+  }
+}
+
+void configModeCallback(WiFiManager *myWiFiManager)
+{
+  String apName = myWiFiManager->getConfigPortalSSID();
+  Serial.printf("WiFi connect failed; entered AP mode: %s\n", apName.c_str());
+  drawSetupPortalScreen(apName, false);
+}
+
+// Runs the WiFiManager config portal non-blockingly while updating the live MM:SS countdown
+bool runNonBlockingPortal(WiFiManager &wm, unsigned long durationMs = 600000UL)
+{
+  bool timedOut = false;
+  unsigned long portalStartMs = millis();
+  int lastSecShown = -1;
+
+  while (wm.getConfigPortalActive())
+  {
+    wm.process();
+
+    unsigned long elapsed = millis() - portalStartMs;
+    int secsLeft = (elapsed < durationMs) ? (int)((durationMs - elapsed) / 1000) : 0;
+    if (secsLeft == 0)
+      timedOut = true;
+
+    if (secsLeft != lastSecShown)
+    {
+      lastSecShown = secsLeft;
+      int mins = secsLeft / 60;
+      int secs = secsLeft % 60;
+
+      String timerText = "Time remaining: " +
+                         String(mins < 10 ? "0" : "") + String(mins) + ":" +
+                         String(secs < 10 ? "0" : "") + String(secs);
+
+      tft.fillRect(20, 214, 280, 22, TFT_BLACK);
+      tft.setTextDatum(MC_DATUM);
+      tft.setTextColor(secsLeft <= 30 ? TFT_RED : TFT_SILVER, TFT_BLACK);
+      tft.drawString(timerText, SCREEN_W / 2, 224, 2);
+      tft.setTextDatum(TL_DATUM);
+    }
+
+    delay(10);
+  }
+
+  return timedOut;
 }
 
 void writePreferences(String hour, String mins, String day,
@@ -701,8 +1068,19 @@ void setup()
   touch.begin();
   touch.setRotation(1);
 
-  // 1. Load saved preferences first
+  // 1. Build "holiday-xxxx" hostname immediately so AP never defaults to "ESP_xxxxxx"
+  initHostname();
+
+  // 2. Load & validate saved holiday preferences
   readPreferences();
+
+  // 3. Read stored Wi-Fi SSID from NVS before attempting connection
+  WiFi.mode(WIFI_STA);
+  String savedSsid = getSavedWifiSSID();
+
+  // 4. Display Welcome Screen with Preferences & target Wi-Fi network
+  drawBootWelcomeScreen(savedSsid);
+  delay(2000); // Allow user time to read welcome & preferences screen
 
   WiFiManagerParameter custom_hol_hour("hour", "Hour (0-23)", gHour, 2);
   WiFiManagerParameter custom_hol_mins("mins", "Mins (0-59)", gMins, 2);
@@ -712,10 +1090,12 @@ void setup()
   WiFiManagerParameter custom_hol_where("where", "Destination", gWhere, 20);
 
   WiFiManager wifiManager;
+  wifiManager.setAPCallback(configModeCallback);
   wifiManager.setSaveConfigCallback(saveConfigCallback);
   wifiManager.setSaveParamsCallback(saveConfigCallback);
   wifiManager.setBreakAfterConfig(true);   // Exit portal immediately after Save is clicked
   wifiManager.setConfigPortalTimeout(600); // 10 minutes (600 seconds)
+  wifiManager.setConfigPortalBlocking(false);
 
   wifiManager.addParameter(&custom_hol_hour);
   wifiManager.addParameter(&custom_hol_mins);
@@ -724,14 +1104,36 @@ void setup()
   wifiManager.addParameter(&custom_hol_year);
   wifiManager.addParameter(&custom_hol_where);
 
-  // 2. Connect to saved Wi-Fi first so we have an IP and OTA hostname
-  if (!wifiManager.autoConnect())
+  // 5. Connect to saved Wi-Fi, or start non-blocking AP named "holiday-xxxx"
+  bool wifiConnected = wifiManager.autoConnect(otaHostname);
+  if (!wifiConnected)
+  {
+    // Drive the non-blocking AP portal with the live MM:SS countdown
+    runNonBlockingPortal(wifiManager, 600000UL);
+    wifiConnected = (WiFi.status() == WL_CONNECTED);
+  }
+
+  wifiManager.setConfigPortalBlocking(true);
+
+  if (!wifiConnected)
   {
     showScreenError("WI-FI ERROR", "Failed to connect to Wi-Fi.\nRestarting in 5 seconds...", true, 5000);
     ESP.restart();
   }
 
-  // 3. Start OTA, then show combined OTA + "Tap Screen to Configure" screen for 5s
+  // Save holiday details immediately if entered during initial autoConnect setup portal
+  if (shouldSaveConfig)
+  {
+    writePreferences(
+        custom_hol_hour.getValue(),
+        custom_hol_mins.getValue(),
+        custom_hol_day.getValue(),
+        custom_hol_month.getValue(),
+        custom_hol_year.getValue(),
+        custom_hol_where.getValue());
+  }
+
+  // 6. Start OTA, then show combined OTA + "Tap Screen to Configure" screen for 10s
   bool mdnsOk = setupOTA();
   bool portalRan = false;
   bool portalTimedOut = false;
@@ -742,112 +1144,13 @@ void setup()
     otaServer.stop();
 
     String apName = String(otaHostname);
+    drawSetupPortalScreen(apName, false);
 
-    tft.fillScreen(TFT_BLACK);
-
-    // Header bar
-    tft.fillRect(0, 0, 320, 26, TFT_NAVY);
-    tft.drawFastHLine(0, 26, 320, TFT_CYAN);
-    tft.setTextDatum(MC_DATUM);
-    tft.setTextColor(TFT_WHITE, TFT_NAVY);
-    tft.drawString("SETUP MODE", 160, 13, 2);
-
-    // Styled instruction card
-    tft.drawRoundRect(8, 34, 304, 174, 8, TFT_DARKCYAN);
-    tft.setTextDatum(TL_DATUM);
-    tft.setTextFont(2);
-    tft.setTextSize(1);
-
-    int y = 42;
-    const int step = 22;
-
-    tft.setTextColor(TFT_CYAN, TFT_BLACK);
-    tft.setCursor(16, y);
-    tft.print("1.");
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.print(" Open Wi-Fi settings on your phone");
-    y += step;
-
-    tft.setTextColor(TFT_CYAN, TFT_BLACK);
-    tft.setCursor(16, y);
-    tft.print("2.");
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.print(" Connect to ");
-    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-    tft.print(apName);
-    y += step;
-
-    tft.setTextColor(TFT_CYAN, TFT_BLACK);
-    tft.setCursor(16, y);
-    tft.print("3.");
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.print(" Wait for portal (or browse ");
-    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-    tft.print("192.168.4.1");
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.print(")");
-    y += step;
-
-    tft.setTextColor(TFT_CYAN, TFT_BLACK);
-    tft.setCursor(16, y);
-    tft.print("4.");
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.print(" Tap ");
-    tft.setTextColor(TFT_GREEN, TFT_BLACK);
-    tft.print("Configure WiFi");
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.print(" & pick network");
-    y += step;
-
-    tft.setTextColor(TFT_CYAN, TFT_BLACK);
-    tft.setCursor(16, y);
-    tft.print("5.");
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.print(" Enter Wi-Fi password & holiday info");
-    y += step;
-
-    tft.setTextColor(TFT_CYAN, TFT_BLACK);
-    tft.setCursor(16, y);
-    tft.print("6.");
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.print(" Scroll down and tap ");
-    tft.setTextColor(TFT_GREEN, TFT_BLACK);
-    tft.print("Save");
-
-    // Run config portal non-blocking so we can update the 10-minute MM:SS countdown
+    // Run config portal non-blocking with live MM:SS countdown
     wifiManager.setConfigPortalBlocking(false);
     wifiManager.startConfigPortal(apName.c_str());
 
-    const unsigned long portalDurationMs = 600000UL; // 10 minutes
-    unsigned long portalStartMs = millis();
-    int lastSecShown = -1;
-
-    while (wifiManager.getConfigPortalActive())
-    {
-      wifiManager.process();
-
-      unsigned long elapsed = millis() - portalStartMs;
-      int secsLeft = (elapsed < portalDurationMs) ? (int)((portalDurationMs - elapsed) / 1000) : 0;
-      if (secsLeft == 0)
-        portalTimedOut = true;
-
-      if (secsLeft != lastSecShown)
-      {
-        lastSecShown = secsLeft;
-        int mins = secsLeft / 60;
-        int secs = secsLeft % 60;
-
-        String timerText = "Time remaining: " + String(mins < 10 ? "0" : "") + String(mins) + ":" + String(secs < 10 ? "0" : "") + String(secs);
-
-        tft.fillRect(20, 214, 280, 22, TFT_BLACK);
-        tft.setTextDatum(MC_DATUM);
-        tft.setTextColor(secsLeft <= 30 ? TFT_RED : TFT_SILVER, TFT_BLACK);
-        tft.drawString(timerText, 160, 224, 2);
-        tft.setTextDatum(TL_DATUM);
-      }
-
-      delay(10);
-    }
+    portalTimedOut = runNonBlockingPortal(wifiManager, 600000UL);
 
     wifiManager.setConfigPortalBlocking(true);
     otaServer.begin();
@@ -855,7 +1158,7 @@ void setup()
 
   tft.fillScreen(TFT_BLACK);
 
-  // 4. Save updated holiday details if changed OR if portal was submitted before timing out
+  // 7. Save updated holiday details if changed OR if portal was submitted before timing out
   if (shouldSaveConfig || (portalRan && !portalTimedOut))
   {
     writePreferences(
@@ -867,7 +1170,7 @@ void setup()
         custom_hol_where.getValue());
   }
 
-  // 5. Sync NTP time
+  // 8. Sync NTP time
   configTzTime(MY_TZ, "pool.ntp.org", "time.nist.gov");
 
   tft.setTextFont(2);
@@ -892,7 +1195,7 @@ void setup()
 
   tft.fillScreen(TFT_BLACK);
 
-  // 6. Calculate target holiday timestamp
+  // 9. Calculate target holiday timestamp
   struct tm holtimeinfo = {};
   holtimeinfo.tm_hour = atoi(gHour);
   holtimeinfo.tm_min = atoi(gMins);
@@ -907,7 +1210,7 @@ void setup()
     showScreenError("DATE ERROR", "Could not parse holiday target date.\nPlease re-run setup.", true, 4000);
   }
 
-  // 7. Render static UI elements & initialize persistent sprites
+  // 10. Render static UI elements & initialize persistent sprites
   initSprites();
   displayLines();
   displaySSIDAndWhen();
@@ -918,6 +1221,7 @@ void setup()
 
   Serial.println("setup() complete");
 }
+
 void loop()
 {
   static time_t lastRenderedSec = 0;
@@ -970,7 +1274,7 @@ void loop()
     }
   }
 
-  if (!isArrived && (millis() - lastInteractionMillis >= SCREENSAVER_TIMEOUT_MS))
+  if (gScreensaverEnabled && !isArrived && (millis() - lastInteractionMillis >= SCREENSAVER_TIMEOUT_MS))
   {
     inScreenSaver = true;
     updateScreenSaverEyes(true);
