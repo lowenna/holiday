@@ -62,7 +62,7 @@ extern unsigned long lastWeatherFetchMs;
 // ============================================================================
 // Blinking Eyes Screen Saver (Activates after SCREENSAVER_TIMEROUT_MS of no touch)
 // ============================================================================
-constexpr unsigned long SCREENSAVER_TIMEOUT_MS = 10000; // 300000UL * 12; // 5 mins is 300000UL
+constexpr unsigned long SCREENSAVER_TIMEOUT_MS = 300000UL * 12; // 5 mins is 300000UL
 bool inScreenSaver = false;
 unsigned long lastInteractionMillis = 0;
 
@@ -95,6 +95,7 @@ char gYear[5] = "2026";
 char gWhere[21] = "Maldives";
 bool gScreensaverEnabled = true;
 bool gWeatherEnabled = true;
+bool gDimmingEnabled = true;
 
 time_t rawhol = 0;
 
@@ -595,7 +596,7 @@ bool areWeConfiguring(bool mdnsOk)
   tft.fillScreen(TFT_BLACK);
   tft.setTextFont(2);
   tft.setTextSize(1);
-  tft.setCursor(4, 4);
+  tft.setCursor(4, 2);
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
   tft.println("To update firmware, browse to:");
   tft.setTextColor(TFT_GREEN, TFT_BLACK);
@@ -603,19 +604,20 @@ bool areWeConfiguring(bool mdnsOk)
     tft.println("  http://" + String(otaHostname) + ".local");
   tft.println("  http://" + WiFi.localIP().toString());
 
-  // Main Wi-Fi / Holiday Config Button (y = 60 to 124)
-  tft.drawRoundRect(20, 60, 280, 64, 10, TFT_CYAN);
-  tft.fillRoundRect(22, 62, 276, 60, 8, TFT_NAVY);
+  // Main Wi-Fi / Holiday Config Button (y = 54 to 110)
+  tft.drawRoundRect(20, 54, 280, 56, 10, TFT_CYAN);
+  tft.fillRoundRect(22, 56, 276, 52, 8, TFT_NAVY);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_WHITE, TFT_NAVY);
-  tft.drawString("Tap here to change WiFi/Holiday", 160, 79, 2);
+  tft.drawString("Tap here to change WiFi/Holiday", 160, 71, 2);
   tft.setTextDatum(TL_DATUM);
 
-  // Two Compact Toggle Switch Rows
-  drawToggleRow(136, "Screensaver:", gScreensaverEnabled);
-  drawToggleRow(172, "Weather:", gWeatherEnabled);
+  // Three Compact Toggle Switch Rows
+  drawToggleRow(118, "Screensaver:", gScreensaverEnabled);
+  drawToggleRow(152, "Weather:", gWeatherEnabled);
+  drawToggleRow(186, "Night Dim:", gDimmingEnabled);
 
-  tft.setCursor(4, 220);
+  tft.setCursor(4, 223);
   tft.setTextColor(TFT_YELLOW, TFT_BLACK);
   tft.print("(C) John Howard 2026");
 
@@ -626,46 +628,60 @@ bool areWeConfiguring(bool mdnsOk)
     if (secsLeft != lastSecsLeft)
     {
       lastSecsLeft = secsLeft;
-      tft.fillRect(40, 93, 240, 22, TFT_NAVY);
+      tft.fillRect(40, 84, 240, 20, TFT_NAVY);
       tft.setTextDatum(MC_DATUM);
       tft.setTextColor(TFT_YELLOW, TFT_NAVY);
-      tft.drawString("Starting in " + String(secsLeft) + "s...", 160, 103, 2);
+      tft.drawString("Starting in " + String(secsLeft) + "s...", 160, 93, 2);
       tft.setTextDatum(TL_DATUM);
     }
 
     bool touching = getTouchPixel(tx, ty);
     if (touching && !wasTouching)
     {
-      // Row 1: Screensaver toggle (y = 132..166)
-      if (tx >= 20 && tx <= 300 && ty >= 132 && ty <= 166)
+      // Row 1: Screensaver toggle (y = 116..148)
+      if (tx >= 20 && tx <= 300 && ty >= 116 && ty <= 148)
       {
         gScreensaverEnabled = !gScreensaverEnabled;
         prefs.begin("hol", false);
         prefs.putBool("ssaver", gScreensaverEnabled);
         prefs.end();
 
-        drawToggleRow(136, "Screensaver:", gScreensaverEnabled);
+        drawToggleRow(118, "Screensaver:", gScreensaverEnabled);
         tone(AZTOUCH_BEEPER, gScreensaverEnabled ? 880 : 440, 80);
 
         startAt = millis();
         lastSecsLeft = -1;
       }
-      // Row 2: Weather toggle (y = 168..204)
-      else if (tx >= 20 && tx <= 300 && ty >= 168 && ty <= 204)
+      // Row 2: Weather toggle (y = 150..182)
+      else if (tx >= 20 && tx <= 300 && ty >= 150 && ty <= 182)
       {
         gWeatherEnabled = !gWeatherEnabled;
         prefs.begin("hol", false);
         prefs.putBool("wxen", gWeatherEnabled);
         prefs.end();
 
-        drawToggleRow(172, "Weather:", gWeatherEnabled);
+        drawToggleRow(152, "Weather:", gWeatherEnabled);
         tone(AZTOUCH_BEEPER, gWeatherEnabled ? 880 : 440, 80);
 
         startAt = millis();
         lastSecsLeft = -1;
       }
-      // Main Wi-Fi / Holiday Config Button (y = 60..124)
-      else if (tx >= 20 && tx <= 300 && ty >= 60 && ty <= 124)
+      // Row 3: Night Dimming toggle (y = 184..216)
+      else if (tx >= 20 && tx <= 300 && ty >= 184 && ty <= 216)
+      {
+        gDimmingEnabled = !gDimmingEnabled;
+        prefs.begin("hol", false);
+        prefs.putBool("dim", gDimmingEnabled);
+        prefs.end();
+
+        drawToggleRow(186, "Night Dim:", gDimmingEnabled);
+        tone(AZTOUCH_BEEPER, gDimmingEnabled ? 880 : 440, 80);
+
+        startAt = millis();
+        lastSecsLeft = -1;
+      }
+      // Main Wi-Fi / Holiday Config Button (y = 54..110)
+      else if (tx >= 20 && tx <= 300 && ty >= 54 && ty <= 110)
       {
         triggered = true;
       }
@@ -724,6 +740,7 @@ void readPreferences()
   String lWhere = prefs.getString("where", "");
   gScreensaverEnabled = prefs.getBool("ssaver", true);
   gWeatherEnabled = prefs.getBool("wxen", true);
+  gDimmingEnabled = prefs.getBool("dim", true);
   prefs.end();
 
   if (lHour.length() == 0 && lMins.length() == 0 && lDay.length() == 0 &&
@@ -1151,6 +1168,16 @@ void initBacklightPWM()
 
 void updateAutoBacklight(time_t rawlocal, const struct tm &ukTm)
 {
+  if (!gDimmingEnabled)
+  {
+    if (currentBacklightLevel != BL_BRIGHT_DAY)
+    {
+      currentBacklightLevel = BL_BRIGHT_DAY;
+      ledcWrite(BL_PWM_CHANNEL, currentBacklightLevel);
+    }
+    return;
+  }
+
   int hour = ukTm.tm_hour;
   int minute = ukTm.tm_min;
 
@@ -1181,12 +1208,10 @@ void updateAutoBacklight(time_t rawlocal, const struct tm &ukTm)
     unsigned long sinceTouch = now - lastBacklightBoostMs;
     if (sinceTouch < BL_BOOST_MS)
     {
-      // Hold at 100% brightness for 15s after boot or touch
       targetLevel = BL_BRIGHT_DAY;
     }
     else if (sinceTouch < (BL_BOOST_MS + BL_FADE_MS))
     {
-      // Gradually fade from BL_BRIGHT_DAY (0) to BL_BRIGHT_NIGHT (246) over 30 seconds
       unsigned long fadeElapsed = sinceTouch - BL_BOOST_MS;
       targetLevel = (uint8_t)map((long)fadeElapsed, 0L, (long)BL_FADE_MS, (long)BL_BRIGHT_DAY, (long)BL_BRIGHT_NIGHT);
     }
@@ -1502,7 +1527,7 @@ void loop()
 
   if (inScreenSaver)
   {
-    if (freshTap || isArrived)
+    if (freshTap)
     {
       wakeFromScreenSaver(isArrived);
       lastRenderedSec = 0;
@@ -1558,7 +1583,7 @@ void loop()
     }
   }
 
-  if (gScreensaverEnabled && !isArrived && (millis() - lastInteractionMillis >= SCREENSAVER_TIMEOUT_MS))
+  if (gScreensaverEnabled && (millis() - lastInteractionMillis >= SCREENSAVER_TIMEOUT_MS))
   {
     inScreenSaver = true;
     updateScreenSaverEyes(true);
