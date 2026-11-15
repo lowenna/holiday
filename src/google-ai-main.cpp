@@ -26,6 +26,7 @@ extern void fetchDestinationWeather();                            // weather.cpp
 extern bool handleWeatherForecastTouch(uint16_t tx, uint16_t ty); // weather.cpp
 extern String weatherTempStr;                                     // weather.cpp
 extern String weatherCondStr;                                     // weather.cpp
+extern bool hasCachedCoords;                                      // weather.cpp
 extern long destUtcOffsetSec;                                     // weather.cpp
 extern bool hasDestUtcOffset;                                     // weather.cpp
 bool showDestLocalTime = false;
@@ -1037,6 +1038,7 @@ void writePreferences(String hour, String mins, String day,
   prefs.putString("year", year);
   prefs.putString("where", where.length() > 0 ? where : "Holiday");
   prefs.end();
+  hasCachedCoords = false; // Force re-geocoding if destination changed
 
   // Confirm save visually on screen before rebooting
   tft.fillScreen(TFT_BLACK);
@@ -1525,6 +1527,17 @@ void loop()
   // Smoothly update PWM backlight every loop tick (~40 Hz)
   updateAutoBacklight(rawlocal, timeinfo);
 
+  // Refresh destination weather every 30 minutes (even while screensaver is active)
+  if (gWeatherEnabled && (millis() - lastWeatherFetchMs >= WEATHER_INTERVAL_MS))
+  {
+    lastWeatherFetchMs = millis();
+    fetchDestinationWeather();
+    if (!inScreenSaver)
+    {
+      drawWeatherBadge();
+    }
+  }
+
   if (inScreenSaver)
   {
     if (freshTap)
@@ -1625,13 +1638,6 @@ void loop()
     if (rawlocal % 10 == 0)
     {
       drawWifiSignalBars(2, BOT_TEXT_Y + 1);
-    }
-
-    if (millis() - lastWeatherFetchMs >= WEATHER_INTERVAL_MS)
-    {
-      lastWeatherFetchMs = millis();
-      fetchDestinationWeather();
-      drawWeatherBadge();
     }
   }
 

@@ -472,7 +472,6 @@ void fetchDestinationWeather()
             }
 
             // 3. Parse 8 days starting from today (index 0) + daily precipitation totals
-            float todayPrecipMm = 0.0f;
             String dyKey = String(char(34)) + "daily" + String(char(34)) + ":{";
             int dyIdx = wxPayload.indexOf(dyKey);
             if (dyIdx >= 0)
@@ -487,11 +486,6 @@ void fetchDestinationWeather()
                 int nC = extractJsonNumberArray(dySection, "weathercode", dCodes.data(), 9);
                 int nT = extractJsonNumberArray(dySection, "temperature_2m_max", dTemps.data(), 9);
                 int nP = extractJsonNumberArray(dySection, "precipitation_sum", dPrecip.data(), 9);
-
-                if (nP >= 1)
-                {
-                    todayPrecipMm = dPrecip.at(0);
-                }
 
                 int available = min(nN, min(nC, nT));
 
@@ -514,21 +508,10 @@ void fetchDestinationWeather()
                 }
             }
 
-            // Build final condition string with optional "(X mm)" rain total due today
+            // Build final condition string without daily rainfall suffix
             if (hasCurrent)
             {
-                String precipSuffix = "";
-                int roundedMm = (int)roundf(todayPrecipMm);
-                if (roundedMm >= 1)
-                {
-                    precipSuffix = " (" + String(roundedMm) + " mm)";
-                }
-                else if (todayPrecipMm > 0.1f)
-                {
-                    precipSuffix = " (<1 mm)";
-                }
-
-                weatherCondStr = "C " + baseCondText + precipSuffix;
+                weatherCondStr = "C " + baseCondText;
                 Serial.println("[WX] Updated destination weather: " + weatherTempStr + " deg " + weatherCondStr);
             }
         }
