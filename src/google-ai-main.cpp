@@ -1064,12 +1064,7 @@ void displaySSIDAndWhen()
   drawWifiSignalBars(2, BOT_TEXT_Y + 1);
 
   tft.setTextDatum(TL_DATUM);
-  if (!gWeatherEnabled)
-  {
-    tft.setTextColor(TFT_GREEN, TFT_BLACK);
-    tft.drawString(WiFi.SSID(), 23, BOT_TEXT_Y, 2);
-  }
-  else if (weatherTempStr.length() > 0)
+  if (gWeatherEnabled && weatherTempStr.length() > 0)
   {
     int x = 23;
     tft.setTextColor(TFT_CYAN, TFT_BLACK);
@@ -1082,8 +1077,8 @@ void displaySSIDAndWhen()
   }
   else
   {
-    tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-    tft.drawString("Loading wx...", 23, BOT_TEXT_Y, 2);
+    tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    tft.drawString(WiFi.SSID(), 23, BOT_TEXT_Y, 2);
   }
 
   tft.setTextColor(TFT_GREEN, TFT_BLACK);
