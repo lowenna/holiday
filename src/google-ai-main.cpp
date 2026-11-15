@@ -969,7 +969,7 @@ void writePreferences(String hour, String mins, String day,
   tft.fillScreen(TFT_BLACK);
   tft.setTextColor(TFT_GREEN, TFT_BLACK);
   tft.setTextDatum(MC_DATUM);
-  tft.drawString("SAVED HOLIDAY SETTINGS!", 160, 95, 4);
+  tft.drawString("Settings saved!", 160, 95, 4);
   String summary = where + " - " + day + "/" + month + "/" + year + " " + hour + ":" + mins;
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.drawString(summary, 160, 130, 2);
@@ -1211,11 +1211,16 @@ void setup()
   }
 
   // 10. Render static UI elements & initialize persistent sprites
+  // 10. Render static UI elements & initialize persistent sprites
   initSprites();
   displayLines();
   displaySSIDAndWhen();
   drawStaticBackgroundImage();
   drawWhere(false);
+
+  fetchDestinationWeather();
+  drawWeatherBadge();
+  lastWeatherFetchMs = millis();
 
   lastInteractionMillis = millis();
 
