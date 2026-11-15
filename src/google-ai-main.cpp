@@ -20,11 +20,12 @@ char otaHostname[24];
 WebServer otaServer(80);
 bool otaInProgress = false;
 
-extern void updateScreenSaverEyes(bool); // eyes.cpp
-extern void drawWeatherBadge();          // weather.cpp
-extern void fetchDestinationWeather();   // weather.cpp
-extern String weatherTempStr;            // weather.cpp
-extern String weatherCondStr;            // weather.cpp
+extern void updateScreenSaverEyes(bool);                          // eyes.cpp
+extern void drawWeatherBadge();                                   // weather.cpp
+extern void fetchDestinationWeather();                            // weather.cpp
+extern bool handleWeatherForecastTouch(uint16_t tx, uint16_t ty); // weather.cpp
+extern String weatherTempStr;                                     // weather.cpp
+extern String weatherCondStr;                                     // weather.cpp
 
 // ============================================================================
 // Hardware & Layout Constants
@@ -1344,7 +1345,14 @@ void loop()
     return;
   }
 
-  if (isArrived && freshTap && (millis() - lastReplayMillis > 1500))
+  bool handledWeatherTap = false;
+  if (freshTap && handleWeatherForecastTouch(tx, ty))
+  {
+    tone(AZTOUCH_BEEPER, 880, 45);
+    handledWeatherTap = true;
+  }
+
+  if (!handledWeatherTap && isArrived && freshTap && (millis() - lastReplayMillis > 1500))
   {
     lastReplayMillis = millis();
     playHolidayFanfare();
