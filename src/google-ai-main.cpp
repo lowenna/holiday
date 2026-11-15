@@ -1280,6 +1280,79 @@ void setup()
   Serial.println("setup() complete");
 }
 
+void openInAppSetup()
+{
+  LcarsAudio::beepBoot();
+  bool wasWeatherEnabled = gWeatherEnabled;
+
+  // Check if mDNS is active
+  bool mdnsOk = true;
+  if (areWeConfiguring(mdnsOk))
+  {
+    otaServer.stop();
+
+    WiFiManagerParameter custom_hol_hour("hour", "Hour (0-23)", gHour, 2);
+    WiFiManagerParameter custom_hol_mins("mins", "Mins (0-59)", gMins, 2);
+    WiFiManagerParameter custom_hol_day("day", "Day (1-31)", gDay, 2);
+    WiFiManagerParameter custom_hol_month("month", "Month (1-12)", gMonth, 2);
+    WiFiManagerParameter custom_hol_year("year", "Year (YYYY)", gYear, 4);
+    WiFiManagerParameter custom_hol_where("where", "Destination", gWhere, 20);
+
+    WiFiManager wifiManager;
+    wifiManager.setSaveConfigCallback(saveConfigCallback);
+    wifiManager.setSaveParamsCallback(saveConfigCallback);
+    wifiManager.setBreakAfterConfig(true);
+    wifiManager.setConfigPortalTimeout(600);
+
+    wifiManager.addParameter(&custom_hol_hour);
+    wifiManager.addParameter(&custom_hol_mins);
+    wifiManager.addParameter(&custom_hol_day);
+    wifiManager.addParameter(&custom_hol_month);
+    wifiManager.addParameter(&custom_hol_year);
+    wifiManager.addParameter(&custom_hol_where);
+
+    String apName = String(otaHostname);
+    drawSetupPortalScreen(apName, false);
+
+    wifiManager.setConfigPortalBlocking(false);
+    wifiManager.startConfigPortal(apName.c_str());
+
+    bool portalTimedOut = runNonBlockingPortal(wifiManager, 600000UL);
+
+    wifiManager.setConfigPortalBlocking(true);
+    otaServer.begin();
+
+    if (shouldSaveConfig || !portalTimedOut)
+    {
+      writePreferences(
+          custom_hol_hour.getValue(),
+          custom_hol_mins.getValue(),
+          custom_hol_day.getValue(),
+          custom_hol_month.getValue(),
+          custom_hol_year.getValue(),
+          custom_hol_where.getValue());
+    }
+  }
+
+  // Redraw main countdown screen cleanly
+  tft.fillScreen(TFT_BLACK);
+  displayLines();
+  drawStaticBackgroundImage();
+  drawWhere(false);
+
+  if (gWeatherEnabled && !wasWeatherEnabled)
+  {
+    fetchDestinationWeather();
+  }
+  displaySSIDAndWhen();
+  if (gWeatherEnabled)
+  {
+    drawWeatherBadge();
+  }
+
+  lastInteractionMillis = millis();
+}
+
 void loop()
 {
   static time_t lastRenderedSec = 0;
@@ -1330,6 +1403,37 @@ void loop()
       yield();
       return;
     }
+  }
+
+  static unsigned long topHoldStartMs = 0;
+  static unsigned long lastHoldSeenMs = 0;
+  const unsigned long HOLD_DURATION_MS = 1500; // 1.5 seconds
+
+  if (touching && !inScreenSaver && ty <= 85)
+  {
+    lastHoldSeenMs = millis();
+    if (topHoldStartMs == 0)
+    {
+      topHoldStartMs = millis();
+    }
+
+    unsigned long heldFor = millis() - topHoldStartMs;
+    int barW = map(constrain((int)heldFor, 0, (int)HOLD_DURATION_MS), 0, (int)HOLD_DURATION_MS, 0, SCREEN_W);
+    tft.drawFastHLine(0, TOP_LINE_Y, barW, TFT_CYAN);
+
+    if (heldFor >= HOLD_DURATION_MS)
+    {
+      topHoldStartMs = 0;
+      tft.drawFastHLine(0, TOP_LINE_Y, SCREEN_W, TFT_WHITE);
+      openInAppSetup();
+      lastRenderedSec = 0;
+      return;
+    }
+  }
+  else if (topHoldStartMs != 0 && (millis() - lastHoldSeenMs > 150))
+  {
+    topHoldStartMs = 0;
+    tft.drawFastHLine(0, TOP_LINE_Y, SCREEN_W, TFT_WHITE);
   }
 
   if (gScreensaverEnabled && !isArrived && (millis() - lastInteractionMillis >= SCREENSAVER_TIMEOUT_MS))
