@@ -23,6 +23,8 @@ bool otaInProgress = false;
 extern void updateScreenSaverEyes(bool); // eyes.cpp
 extern void drawWeatherBadge();          // weather.cpp
 extern void fetchDestinationWeather();   // weather.cpp
+extern String weatherTempStr;            // weather.cpp
+extern String weatherCondStr;            // weather.cpp
 
 // ============================================================================
 // Hardware & Layout Constants
@@ -45,7 +47,7 @@ constexpr int16_t TOP_BAR_H = 16;
 constexpr int16_t TOP_LINE_Y = 17;
 constexpr int16_t BG_IMAGE_Y = 24;
 constexpr int16_t BG_IMAGE_MAX_H = 209;
-constexpr int16_t COUNTDOWN_Y = 150;
+constexpr int16_t COUNTDOWN_Y = 158;
 constexpr int16_t COUNTDOWN_H = 48;
 constexpr int16_t BOT_LINE_Y = 222;
 constexpr int16_t BOT_TEXT_Y = 223;
@@ -88,6 +90,7 @@ char gMonth[3] = "12";
 char gYear[5] = "2026";
 char gWhere[21] = "Maldives";
 bool gScreensaverEnabled = true;
+bool gWeatherEnabled = true;
 
 time_t rawhol = 0;
 
@@ -405,6 +408,28 @@ bool tftOutputWhereBg(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t *bi
   return true;
 }
 
+static TFT_eSprite *gSliceSpritePtr = nullptr;
+static int16_t gSliceMaxH = 0;
+
+bool tftOutputBgSlice(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t *bitmap)
+{
+  if (y >= gSliceMaxH || gSliceSpritePtr == nullptr)
+    return false;
+  gSliceSpritePtr->pushImage(x, y, w, h, bitmap);
+  return true;
+}
+
+void fillSpriteWithMaldivesSlice(TFT_eSprite &spr, int16_t screenY, int16_t sliceH)
+{
+  spr.setSwapBytes(true);
+  spr.fillSprite(TFT_BLACK);
+  gSliceSpritePtr = &spr;
+  gSliceMaxH = sliceH;
+  TJpgDec.setCallback(tftOutputBgSlice);
+  TJpgDec.drawJpg(0, BG_IMAGE_Y - screenY, maldives__esp32__jpg, sizeof(maldives__esp32__jpg));
+  gSliceSpritePtr = nullptr;
+}
+
 void drawWhere(bool isArrived = false)
 {
   const int16_t bannerH = 42;
@@ -504,43 +529,40 @@ void saveConfigCallback()
   Serial.println("WiFiManager config changed; flagging for NVS save.");
   shouldSaveConfig = true;
 }
-void drawScreensaverToggleButton()
+void drawToggleRow(int16_t rowY, const char *label, bool isEnabled)
 {
   const int16_t rowX = 20;
-  const int16_t rowY = 148;
   const int16_t rowW = 280;
-  const int16_t rowH = 30;
+  const int16_t rowH = 28;
 
-  // Clear row area cleanly
   tft.fillRect(rowX, rowY, rowW, rowH, TFT_BLACK);
 
   // Label on the left
   tft.setTextDatum(ML_DATUM);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.drawString("Screensaver:", rowX + 6, rowY + (rowH / 2), 2);
+  tft.drawString(label, rowX + 6, rowY + (rowH / 2), 2);
 
   // Status text ("ON" / "OFF")
   tft.setTextDatum(MR_DATUM);
-  tft.setTextColor(gScreensaverEnabled ? TFT_GREEN : TFT_RED, TFT_BLACK);
-  tft.drawString(gScreensaverEnabled ? "ON" : "OFF", rowX + rowW - 64, rowY + (rowH / 2), 2);
+  tft.setTextColor(isEnabled ? TFT_GREEN : TFT_RED, TFT_BLACK);
+  tft.drawString(isEnabled ? "ON" : "OFF", rowX + rowW - 64, rowY + (rowH / 2), 2);
   tft.setTextDatum(TL_DATUM);
 
-  // Compact sliding pill switch on the right (52x22)
+  // Compact sliding pill switch on the right (52x20)
   const int16_t swW = 52;
-  const int16_t swH = 22;
+  const int16_t swH = 20;
   const int16_t swX = rowX + rowW - swW - 4;
   const int16_t swY = rowY + (rowH - swH) / 2;
 
-  uint16_t trackCol = gScreensaverEnabled ? TFT_DARKGREEN : TFT_DARKGREY;
-  uint16_t borderCol = gScreensaverEnabled ? TFT_GREEN : TFT_LIGHTGREY;
+  uint16_t trackCol = isEnabled ? TFT_DARKGREEN : TFT_DARKGREY;
+  uint16_t borderCol = isEnabled ? TFT_GREEN : TFT_LIGHTGREY;
 
   tft.fillRoundRect(swX, swY, swW, swH, swH / 2, trackCol);
   tft.drawRoundRect(swX, swY, swW, swH, swH / 2, borderCol);
 
-  // Sliding circular knob
-  int16_t knobR = 8;
+  int16_t knobR = 7;
   int16_t knobY = swY + (swH / 2);
-  int16_t knobX = gScreensaverEnabled ? (swX + swW - knobR - 3) : (swX + knobR + 3);
+  int16_t knobX = isEnabled ? (swX + swW - knobR - 3) : (swX + knobR + 3);
   tft.fillCircle(knobX, knobY, knobR, TFT_WHITE);
 }
 
@@ -562,16 +584,17 @@ bool areWeConfiguring(bool mdnsOk)
     tft.println("  http://" + String(otaHostname) + ".local");
   tft.println("  http://" + WiFi.localIP().toString());
 
-  // Main Wi-Fi / Holiday Config Button (y = 66 to 132)
-  tft.drawRoundRect(20, 66, 280, 66, 10, TFT_CYAN);
-  tft.fillRoundRect(22, 68, 276, 62, 8, TFT_NAVY);
+  // Main Wi-Fi / Holiday Config Button (y = 60 to 124)
+  tft.drawRoundRect(20, 60, 280, 64, 10, TFT_CYAN);
+  tft.fillRoundRect(22, 62, 276, 60, 8, TFT_NAVY);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_WHITE, TFT_NAVY);
-  tft.drawString("Tap here to change WiFi/Holiday", 160, 86, 2);
+  tft.drawString("Tap here to change WiFi/Holiday", 160, 79, 2);
   tft.setTextDatum(TL_DATUM);
 
-  // Compact Screensaver Toggle Switch Row (y = 148 to 178)
-  drawScreensaverToggleButton();
+  // Two Compact Toggle Switch Rows
+  drawToggleRow(136, "Screensaver:", gScreensaverEnabled);
+  drawToggleRow(172, "Weather:", gWeatherEnabled);
 
   tft.setCursor(4, 220);
   tft.setTextColor(TFT_YELLOW, TFT_BLACK);
@@ -584,33 +607,46 @@ bool areWeConfiguring(bool mdnsOk)
     if (secsLeft != lastSecsLeft)
     {
       lastSecsLeft = secsLeft;
-      tft.fillRect(40, 100, 240, 22, TFT_NAVY);
+      tft.fillRect(40, 93, 240, 22, TFT_NAVY);
       tft.setTextDatum(MC_DATUM);
       tft.setTextColor(TFT_YELLOW, TFT_NAVY);
-      tft.drawString("Starting in " + String(secsLeft) + "s...", 160, 110, 2);
+      tft.drawString("Starting in " + String(secsLeft) + "s...", 160, 103, 2);
       tft.setTextDatum(TL_DATUM);
     }
 
     bool touching = getTouchPixel(tx, ty);
     if (touching && !wasTouching)
     {
-      // Tap anywhere on the Screensaver toggle row (y = 144..182)
-      if (tx >= 20 && tx <= 300 && ty >= 144 && ty <= 182)
+      // Row 1: Screensaver toggle (y = 132..166)
+      if (tx >= 20 && tx <= 300 && ty >= 132 && ty <= 166)
       {
         gScreensaverEnabled = !gScreensaverEnabled;
         prefs.begin("hol", false);
         prefs.putBool("ssaver", gScreensaverEnabled);
         prefs.end();
 
-        drawScreensaverToggleButton();
+        drawToggleRow(136, "Screensaver:", gScreensaverEnabled);
         tone(AZTOUCH_BEEPER, gScreensaverEnabled ? 880 : 440, 80);
 
-        // Reset countdown timer so user can clearly see the updated toggle state
         startAt = millis();
         lastSecsLeft = -1;
       }
-      // Tap the WiFi/Holiday Config Button (y = 66..132)
-      else if (tx >= 20 && tx <= 300 && ty >= 66 && ty <= 132)
+      // Row 2: Weather toggle (y = 168..204)
+      else if (tx >= 20 && tx <= 300 && ty >= 168 && ty <= 204)
+      {
+        gWeatherEnabled = !gWeatherEnabled;
+        prefs.begin("hol", false);
+        prefs.putBool("wxen", gWeatherEnabled);
+        prefs.end();
+
+        drawToggleRow(172, "Weather:", gWeatherEnabled);
+        tone(AZTOUCH_BEEPER, gWeatherEnabled ? 880 : 440, 80);
+
+        startAt = millis();
+        lastSecsLeft = -1;
+      }
+      // Main Wi-Fi / Holiday Config Button (y = 60..124)
+      else if (tx >= 20 && tx <= 300 && ty >= 60 && ty <= 124)
       {
         triggered = true;
       }
@@ -668,6 +704,7 @@ void readPreferences()
   String lYear = prefs.getString("year", "");
   String lWhere = prefs.getString("where", "");
   gScreensaverEnabled = prefs.getBool("ssaver", true);
+  gWeatherEnabled = prefs.getBool("wxen", true);
   prefs.end();
 
   if (lHour.length() == 0 && lMins.length() == 0 && lDay.length() == 0 &&
@@ -1022,15 +1059,36 @@ void drawWifiSignalBars(int x, int y)
 
 void displaySSIDAndWhen()
 {
-  tft.fillRect(0, BOT_TEXT_Y, SCREEN_W, 16, TFT_BLACK);
+  tft.fillRect(0, BOT_TEXT_Y, SCREEN_W, 17, TFT_BLACK);
   drawWifiSignalBars(2, BOT_TEXT_Y + 1);
 
-  tft.setTextColor(TFT_GREEN, TFT_BLACK);
   tft.setTextDatum(TL_DATUM);
-  tft.drawString(WiFi.SSID(), 22, BOT_TEXT_Y, 2);
+  if (!gWeatherEnabled)
+  {
+    tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    tft.drawString(WiFi.SSID(), 23, BOT_TEXT_Y, 2);
+  }
+  else if (weatherTempStr.length() > 0)
+  {
+    int x = 23;
+    tft.setTextColor(TFT_CYAN, TFT_BLACK);
+    tft.drawString(weatherTempStr, x, BOT_TEXT_Y, 2);
 
+    int tempW = tft.textWidth(weatherTempStr, 2);
+    tft.drawCircle(x + tempW + 2, BOT_TEXT_Y + 3, 2, TFT_CYAN);
+
+    tft.drawString(weatherCondStr, x + tempW + 6, BOT_TEXT_Y, 2);
+  }
+  else
+  {
+    tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    tft.drawString("Loading wx...", 23, BOT_TEXT_Y, 2);
+  }
+
+  tft.setTextColor(TFT_GREEN, TFT_BLACK);
   tft.setTextDatum(TR_DATUM);
   tft.drawString(formatPrettyDateTime(rawhol), SCREEN_W - 1, BOT_TEXT_Y, 2);
+  tft.setTextDatum(TL_DATUM);
 }
 
 void wakeFromScreenSaver(bool isArrived)
@@ -1210,8 +1268,7 @@ void setup()
     showScreenError("DATE ERROR", "Could not parse holiday target date.\nPlease re-run setup.", true, 4000);
   }
 
-  // 10. Render static UI elements & initialize persistent sprites
-  // 10. Render static UI elements & initialize persistent sprites
+  // 10. Render static UI elements, persistent sprites & live weather
   initSprites();
   displayLines();
   displaySSIDAndWhen();
