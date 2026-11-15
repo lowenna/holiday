@@ -26,6 +26,9 @@ extern void fetchDestinationWeather();                            // weather.cpp
 extern bool handleWeatherForecastTouch(uint16_t tx, uint16_t ty); // weather.cpp
 extern String weatherTempStr;                                     // weather.cpp
 extern String weatherCondStr;                                     // weather.cpp
+extern long destUtcOffsetSec;                                     // weather.cpp
+extern bool hasDestUtcOffset;                                     // weather.cpp
+bool showDestLocalTime = false;
 
 // ============================================================================
 // Hardware & Layout Constants
@@ -367,8 +370,32 @@ String formatPrettyDateTime(time_t t, bool includeSeconds = false)
 void displayCurrentTimeSprite(time_t rawLocal)
 {
   topTimeSprite.fillSprite(TFT_BLACK);
-  topTimeSprite.setTextColor(TFT_GREEN, TFT_BLACK);
-  topTimeSprite.drawCentreString(formatPrettyDateTime(rawLocal, true), SCREEN_W / 2, 0, 2);
+
+  if (showDestLocalTime && hasDestUtcOffset)
+  {
+    time_t destEpoch = rawLocal + destUtcOffsetSec;
+    struct tm destTm;
+    gmtime_r(&destEpoch, &destTm);
+
+    const char *days[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+    const char *months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+
+    String timeStr = String(gWhere) + " " + String(days[destTm.tm_wday]) + " " +
+                     String(destTm.tm_mday) + " " + String(months[destTm.tm_mon]) + " " +
+                     (destTm.tm_hour < 10 ? "0" : "") + String(destTm.tm_hour) + ":" +
+                     (destTm.tm_min < 10 ? "0" : "") + String(destTm.tm_min) + ":" +
+                     (destTm.tm_sec < 10 ? "0" : "") + String(destTm.tm_sec);
+
+    topTimeSprite.setTextColor(TFT_CYAN, TFT_BLACK);
+    topTimeSprite.drawCentreString(timeStr, SCREEN_W / 2, 0, 2);
+  }
+  else
+  {
+    topTimeSprite.setTextColor(TFT_GREEN, TFT_BLACK);
+    topTimeSprite.drawCentreString(formatPrettyDateTime(rawLocal, true), SCREEN_W / 2, 0, 2);
+  }
+
   topTimeSprite.pushSprite(0, 0);
 }
 
@@ -474,54 +501,45 @@ void drawWhere(bool isArrived = false)
   bg.deleteSprite();
 }
 
-/*
-// Helper to blend two RGB565 colors by alpha (0..255)
-static inline uint16_t blendRGB565(uint16_t bg, uint16_t fg, uint8_t alpha)
-{
-  if (alpha == 0)
-    return bg;
-  if (alpha == 255)
-    return fg;
-
-  uint8_t bgR = (bg >> 11) & 0x1F;
-  uint8_t bgG = (bg >> 5) & 0x3F;
-  uint8_t bgB = bg & 0x1F;
-
-  uint8_t fgR = (fg >> 11) & 0x1F;
-  uint8_t fgG = (fg >> 5) & 0x3F;
-  uint8_t fgB = fg & 0x1F;
-
-  uint8_t r = bgR + (((int)(fgR - bgR) * alpha) >> 8);
-  uint8_t g = bgG + (((int)(fgG - bgG) * alpha) >> 8);
-  uint8_t b = bgB + (((int)(fgB - bgB) * alpha) >> 8);
-
-  return (r << 11) | (g << 5) | b;
-}
-
-*/
-
-void drawCountdownLeft(int days, int hours, int mins, int secs, bool showColon, bool isArrived)
+void drawCountdownLeft(int days, int hours, int mins, int secs, bool showColon, bool isArrived, time_t rawlocal)
 {
   countdownBgSprite.pushToSprite(&countdownFgSprite, 0, 0);
-  uint16_t digitColor = TFT_DARKCYAN;
-  if (isArrived)
-  {
-    digitColor = showColon ? TFT_GOLD : TFT_CYAN;
-  }
-  countdownFgSprite.setTextColor(digitColor);
   countdownFgSprite.setTextSize(1);
   countdownFgSprite.setTextFont(7);
-  char sep = (showColon || isArrived) ? ':' : ' ';
-  countdownFgSprite.setCursor(15, 0);
-  countdownFgSprite.printf("%02d.", days);
-  countdownFgSprite.setCursor(95, 0);
-  countdownFgSprite.printf("%02d%c", hours, sep);
-  countdownFgSprite.setCursor(170, 0);
-  countdownFgSprite.printf("%02d%c", mins, sep);
-  countdownFgSprite.setCursor(245, 0);
-  countdownFgSprite.printf("%02d", secs);
+
+  if (isArrived)
+  {
+    // Once arrived, show live local time at the destination in gold (HH:MM:SS)
+    time_t destEpoch = hasDestUtcOffset ? (rawlocal + destUtcOffsetSec) : rawlocal;
+    struct tm destTm;
+    gmtime_r(&destEpoch, &destTm);
+
+    char sep = showColon ? ':' : ' ';
+    countdownFgSprite.setTextColor(TFT_GOLD);
+    countdownFgSprite.setCursor(54, 0);
+    countdownFgSprite.printf("%02d%c", destTm.tm_hour, sep);
+    countdownFgSprite.setCursor(132, 0);
+    countdownFgSprite.printf("%02d%c", destTm.tm_min, sep);
+    countdownFgSprite.setCursor(210, 0);
+    countdownFgSprite.printf("%02d", destTm.tm_sec);
+  }
+  else
+  {
+    countdownFgSprite.setTextColor(TFT_DARKCYAN);
+    char sep = showColon ? ':' : ' ';
+    countdownFgSprite.setCursor(15, 0);
+    countdownFgSprite.printf("%02d.", days);
+    countdownFgSprite.setCursor(95, 0);
+    countdownFgSprite.printf("%02d%c", hours, sep);
+    countdownFgSprite.setCursor(170, 0);
+    countdownFgSprite.printf("%02d%c", mins, sep);
+    countdownFgSprite.setCursor(245, 0);
+    countdownFgSprite.printf("%02d", secs);
+  }
+
   countdownFgSprite.pushSprite(0, COUNTDOWN_Y);
 }
+
 // ============================================================================
 // Configuration & Preferences
 // ============================================================================
@@ -1357,7 +1375,6 @@ void loop()
 {
   static time_t lastRenderedSec = 0;
   static bool blinkState = false;
-  static unsigned long lastReplayMillis = 0;
 
   otaServer.handleClient();
   if (otaInProgress)
@@ -1407,7 +1424,7 @@ void loop()
 
   static unsigned long topHoldStartMs = 0;
   static unsigned long lastHoldSeenMs = 0;
-  const unsigned long HOLD_DURATION_MS = 1500; // 1.5 seconds
+  const unsigned long HOLD_DURATION_MS = 1500; // 1.5s hold = Setup, quick tap = Timezone toggle
 
   if (touching && !inScreenSaver && ty <= 85)
   {
@@ -1418,8 +1435,11 @@ void loop()
     }
 
     unsigned long heldFor = millis() - topHoldStartMs;
-    int barW = map(constrain((int)heldFor, 0, (int)HOLD_DURATION_MS), 0, (int)HOLD_DURATION_MS, 0, SCREEN_W);
-    tft.drawFastHLine(0, TOP_LINE_Y, barW, TFT_CYAN);
+    if (heldFor >= 200)
+    {
+      int barW = map(constrain((int)heldFor, 200, (int)HOLD_DURATION_MS), 200, (int)HOLD_DURATION_MS, 0, SCREEN_W);
+      tft.drawFastHLine(0, TOP_LINE_Y, barW, TFT_CYAN);
+    }
 
     if (heldFor >= HOLD_DURATION_MS)
     {
@@ -1432,8 +1452,17 @@ void loop()
   }
   else if (topHoldStartMs != 0 && (millis() - lastHoldSeenMs > 150))
   {
+    unsigned long totalHeld = lastHoldSeenMs - topHoldStartMs;
     topHoldStartMs = 0;
     tft.drawFastHLine(0, TOP_LINE_Y, SCREEN_W, TFT_WHITE);
+
+    // Quick tap (< 600ms) toggles between UK Time and Destination Local Time
+    if (totalHeld < 600 && hasDestUtcOffset)
+    {
+      showDestLocalTime = !showDestLocalTime;
+      tone(AZTOUCH_BEEPER, showDestLocalTime ? 1047 : 784, 45);
+      displayCurrentTimeSprite(rawlocal);
+    }
   }
 
   if (gScreensaverEnabled && !isArrived && (millis() - lastInteractionMillis >= SCREENSAVER_TIMEOUT_MS))
@@ -1444,17 +1473,9 @@ void loop()
     return;
   }
 
-  bool handledWeatherTap = false;
   if (freshTap && handleWeatherForecastTouch(tx, ty))
   {
     tone(AZTOUCH_BEEPER, 880, 45);
-    handledWeatherTap = true;
-  }
-
-  if (!handledWeatherTap && isArrived && freshTap && (millis() - lastReplayMillis > 1500))
-  {
-    lastReplayMillis = millis();
-    playHolidayFanfare();
   }
 
   if (rawlocal != lastRenderedSec)
@@ -1471,7 +1492,6 @@ void loop()
         drawWhere(true);
         drawWeatherBadge();
         playHolidayFanfare();
-        lastReplayMillis = millis();
       }
     }
 
@@ -1481,16 +1501,14 @@ void loop()
     int diffMins = (totalSecs % 3600) / 60;
     int remSecs = totalSecs % 60;
 
-    drawCountdownLeft(diffDays, diffHours, diffMins, remSecs, blinkState, isArrived);
+    drawCountdownLeft(diffDays, diffHours, diffMins, remSecs, blinkState, isArrived, rawlocal);
     displayCurrentTimeSprite(rawlocal);
 
-    // Refresh 4-bar Wi-Fi signal icon every 10 seconds
     if (rawlocal % 10 == 0)
     {
       drawWifiSignalBars(2, BOT_TEXT_Y + 1);
     }
 
-    // Refresh destination weather every 30 minutes
     if (millis() - lastWeatherFetchMs >= WEATHER_INTERVAL_MS)
     {
       lastWeatherFetchMs = millis();

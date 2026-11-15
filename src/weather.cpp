@@ -19,6 +19,8 @@ static constexpr int16_t HOURLY_H = 44;
 
 String weatherTempStr = "";
 String weatherCondStr = "";
+long destUtcOffsetSec = 0;
+bool hasDestUtcOffset = false;
 float cachedLat = 0.0f;
 float cachedLon = 0.0f;
 bool hasCachedCoords = false;
@@ -388,6 +390,13 @@ void fetchDestinationWeather()
         if (code == HTTP_CODE_OK)
         {
             String wxPayload = http.getString();
+            float utcOff = 0.0f;
+            if (extractJsonNumber(wxPayload, "utc_offset_seconds", utcOff))
+            {
+                destUtcOffsetSec = (long)roundf(utcOff);
+                hasDestUtcOffset = true;
+                Serial.printf("[WX] Destination UTC offset: %ld seconds\n", destUtcOffsetSec);
+            }
 
             // 1. Parse current weather
             String cwKey = String(char(34)) + "current_weather" + String(char(34)) + ":{";
