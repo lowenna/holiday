@@ -356,7 +356,6 @@ void fetchDestinationWeather()
     WiFiClient client;
     HTTPClient http;
     http.setTimeout(6000);
-    http.useHTTP10(true);
 
     if (!hasCachedCoords)
     {
@@ -433,7 +432,7 @@ void fetchDestinationWeather()
                 hasCurrent = true;
             }
 
-            // 2. Parse next 8 hours (shifted by +1h if Island +1h mode is enabled)
+            // 2. Parse next 8 hours (shifted +1h when Island +1h is enabled)
             String hrKey = String(char(34)) + "hourly" + String(char(34)) + ":{";
             int hrIdx = wxPayload.indexOf(hrKey);
             if (hrIdx >= 0)

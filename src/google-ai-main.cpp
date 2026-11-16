@@ -560,30 +560,27 @@ void saveConfigCallback()
   Serial.println("WiFiManager config changed; flagging for NVS save.");
   shouldSaveConfig = true;
 }
-void drawToggleRow(int16_t rowY, const char *label, bool isEnabled)
+void drawToggleTile(int16_t tileX, int16_t tileY, int16_t tileW, const char *label, bool isEnabled)
 {
-  const int16_t rowX = 20;
-  const int16_t rowW = 280;
-  const int16_t rowH = 28;
+  const int16_t tileH = 42;
 
-  tft.fillRect(rowX, rowY, rowW, rowH, TFT_BLACK);
+  tft.fillRoundRect(tileX, tileY, tileW, tileH, 6, TFT_BLACK);
+  tft.drawRoundRect(tileX, tileY, tileW, tileH, 6, isEnabled ? TFT_DARKGREEN : TFT_DARKGREY);
 
-  // Label on the left
-  tft.setTextDatum(ML_DATUM);
-  tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.drawString(label, rowX + 6, rowY + (rowH / 2), 2);
-
-  // Status text ("ON" / "OFF")
-  tft.setTextDatum(MR_DATUM);
-  tft.setTextColor(isEnabled ? TFT_GREEN : TFT_RED, TFT_BLACK);
-  tft.drawString(isEnabled ? "ON" : "OFF", rowX + rowW - 64, rowY + (rowH / 2), 2);
+  // Label on top-left of tile
   tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.drawString(label, tileX + 8, tileY + 3, 2);
 
-  // Compact sliding pill switch on the right (52x20)
-  const int16_t swW = 52;
-  const int16_t swH = 20;
-  const int16_t swX = rowX + rowW - swW - 4;
-  const int16_t swY = rowY + (rowH - swH) / 2;
+  // "ON" / "OFF" status on bottom-left
+  tft.setTextColor(isEnabled ? TFT_GREEN : TFT_RED, TFT_BLACK);
+  tft.drawString(isEnabled ? "ON" : "OFF", tileX + 8, tileY + 21, 2);
+
+  // Compact sliding pill switch on bottom-right (46x18)
+  const int16_t swW = 46;
+  const int16_t swH = 18;
+  const int16_t swX = tileX + tileW - swW - 8;
+  const int16_t swY = tileY + 20;
 
   uint16_t trackCol = isEnabled ? TFT_DARKGREEN : TFT_DARKGREY;
   uint16_t borderCol = isEnabled ? TFT_GREEN : TFT_LIGHTGREY;
@@ -591,7 +588,7 @@ void drawToggleRow(int16_t rowY, const char *label, bool isEnabled)
   tft.fillRoundRect(swX, swY, swW, swH, swH / 2, trackCol);
   tft.drawRoundRect(swX, swY, swW, swH, swH / 2, borderCol);
 
-  int16_t knobR = 7;
+  int16_t knobR = 6;
   int16_t knobY = swY + (swH / 2);
   int16_t knobX = isEnabled ? (swX + swW - knobR - 3) : (swX + knobR + 3);
   tft.fillCircle(knobX, knobY, knobR, TFT_WHITE);
@@ -602,12 +599,12 @@ bool areWeConfiguring(bool mdnsOk)
   unsigned long startAt = millis();
   bool triggered = false;
   int lastSecsLeft = -1;
-  bool wasTouching = false;
+  bool wasTouching = true; // Ignore held finger from long-press until lifted
 
   tft.fillScreen(TFT_BLACK);
   tft.setTextFont(2);
   tft.setTextSize(1);
-  tft.setCursor(4, 2);
+  tft.setCursor(4, 4);
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
   tft.println("To update firmware, browse to:");
   tft.setTextColor(TFT_GREEN, TFT_BLACK);
@@ -615,23 +612,38 @@ bool areWeConfiguring(bool mdnsOk)
     tft.println("  http://" + String(otaHostname) + ".local");
   tft.println("  http://" + WiFi.localIP().toString());
 
-  // Main Wi-Fi / Holiday Config Button (y = 46 to 96)
-  tft.drawRoundRect(20, 46, 280, 50, 10, TFT_CYAN);
-  tft.fillRoundRect(22, 48, 276, 46, 8, TFT_NAVY);
+  // Smaller, centred Wi-Fi / Holiday Config Button (just below y = 85)
+  const int16_t cfgW = 180;
+  const int16_t cfgH = 26;
+  const int16_t cfgX = (SCREEN_W - cfgW) / 2; // x = 70..250
+  const int16_t cfgY = 86;
+  tft.drawRoundRect(cfgX, cfgY, cfgW, cfgH, 6, TFT_CYAN);
+  tft.fillRoundRect(cfgX + 2, cfgY + 2, cfgW - 4, cfgH - 4, 5, TFT_NAVY);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_WHITE, TFT_NAVY);
-  tft.drawString("Tap here to change WiFi/Holiday", 160, 61, 2);
+  tft.drawString("Tap to configure", SCREEN_W / 2, cfgY + (cfgH / 2), 2);
   tft.setTextDatum(TL_DATUM);
 
-  // Four Compact Toggle Switch Rows (30px spacing)
-  drawToggleRow(102, "Screensaver:", gScreensaverEnabled);
-  drawToggleRow(132, "Weather:", gWeatherEnabled);
-  drawToggleRow(162, "Night Dim:", gDimmingEnabled);
-  drawToggleRow(192, "Island +1h:", gIslandPlusOne);
+  // Balanced 2x2 Grid Coordinates (y = 118..207)
+  const int16_t col1X = 12;
+  const int16_t col2X = 166;
+  const int16_t tileW = 142;
+  const int16_t row1Y = 118;
+  const int16_t row2Y = 165;
+  const int16_t tileH = 42;
 
-  tft.setCursor(4, 224);
+  // Left Column (2 toggles)
+  drawToggleTile(col1X, row1Y, tileW, "Screensaver", gScreensaverEnabled);
+  drawToggleTile(col1X, row2Y, tileW, "Weather", gWeatherEnabled);
+
+  // Right Column (2 toggles)
+  drawToggleTile(col2X, row1Y, tileW, "Night Dim", gDimmingEnabled);
+  drawToggleTile(col2X, row2Y, tileW, "Island +1h", gIslandPlusOne);
+
+  // Bottom line: Copyright left-aligned, Countdown right-aligned
+  tft.setTextDatum(TL_DATUM);
   tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-  tft.print("(C) John Howard 2026");
+  tft.drawString("(C) John Howard 2026", 4, 224, 2);
 
   uint16_t tx, ty;
   while ((millis() - startAt < 10000) && !triggered)
@@ -640,74 +652,74 @@ bool areWeConfiguring(bool mdnsOk)
     if (secsLeft != lastSecsLeft)
     {
       lastSecsLeft = secsLeft;
-      tft.fillRect(40, 73, 240, 18, TFT_NAVY);
-      tft.setTextDatum(MC_DATUM);
-      tft.setTextColor(TFT_YELLOW, TFT_NAVY);
-      tft.drawString("Starting in " + String(secsLeft) + "s...", 160, 81, 2);
+      tft.fillRect(175, 222, 145, 18, TFT_BLACK);
+      tft.setTextDatum(TR_DATUM);
+      tft.setTextColor(TFT_CYAN, TFT_BLACK);
+      tft.drawString("Starting in " + String(secsLeft) + "s...", SCREEN_W - 4, 224, 2);
       tft.setTextDatum(TL_DATUM);
     }
 
     bool touching = getTouchPixel(tx, ty);
     if (touching && !wasTouching)
     {
-      // Row 1: Screensaver toggle (y = 100..129)
-      if (tx >= 20 && tx <= 300 && ty >= 100 && ty <= 129)
+      // Top-Left: Screensaver
+      if (tx >= col1X && tx <= (col1X + tileW) && ty >= row1Y && ty <= (row1Y + tileH))
       {
         gScreensaverEnabled = !gScreensaverEnabled;
         prefs.begin("hol", false);
         prefs.putBool("ssaver", gScreensaverEnabled);
         prefs.end();
 
-        drawToggleRow(102, "Screensaver:", gScreensaverEnabled);
+        drawToggleTile(col1X, row1Y, tileW, "Screensaver", gScreensaverEnabled);
         tone(AZTOUCH_BEEPER, gScreensaverEnabled ? 880 : 440, 80);
 
         startAt = millis();
         lastSecsLeft = -1;
       }
-      // Row 2: Weather toggle (y = 130..159)
-      else if (tx >= 20 && tx <= 300 && ty >= 130 && ty <= 159)
+      // Bottom-Left: Weather
+      else if (tx >= col1X && tx <= (col1X + tileW) && ty >= row2Y && ty <= (row2Y + tileH))
       {
         gWeatherEnabled = !gWeatherEnabled;
         prefs.begin("hol", false);
         prefs.putBool("wxen", gWeatherEnabled);
         prefs.end();
 
-        drawToggleRow(132, "Weather:", gWeatherEnabled);
+        drawToggleTile(col1X, row2Y, tileW, "Weather", gWeatherEnabled);
         tone(AZTOUCH_BEEPER, gWeatherEnabled ? 880 : 440, 80);
 
         startAt = millis();
         lastSecsLeft = -1;
       }
-      // Row 3: Night Dimming toggle (y = 160..189)
-      else if (tx >= 20 && tx <= 300 && ty >= 160 && ty <= 189)
+      // Top-Right: Night Dim
+      else if (tx >= col2X && tx <= (col2X + tileW) && ty >= row1Y && ty <= (row1Y + tileH))
       {
         gDimmingEnabled = !gDimmingEnabled;
         prefs.begin("hol", false);
         prefs.putBool("dim", gDimmingEnabled);
         prefs.end();
 
-        drawToggleRow(162, "Night Dim:", gDimmingEnabled);
+        drawToggleTile(col2X, row1Y, tileW, "Night Dim", gDimmingEnabled);
         tone(AZTOUCH_BEEPER, gDimmingEnabled ? 880 : 440, 80);
 
         startAt = millis();
         lastSecsLeft = -1;
       }
-      // Row 4: Island +1h offset toggle (y = 190..220)
-      else if (tx >= 20 && tx <= 300 && ty >= 190 && ty <= 220)
+      // Bottom-Right: Island +1h
+      else if (tx >= col2X && tx <= (col2X + tileW) && ty >= row2Y && ty <= (row2Y + tileH))
       {
         gIslandPlusOne = !gIslandPlusOne;
         prefs.begin("hol", false);
         prefs.putBool("isl1h", gIslandPlusOne);
         prefs.end();
 
-        drawToggleRow(192, "Island +1h:", gIslandPlusOne);
+        drawToggleTile(col2X, row2Y, tileW, "Island +1h", gIslandPlusOne);
         tone(AZTOUCH_BEEPER, gIslandPlusOne ? 880 : 440, 80);
 
         startAt = millis();
         lastSecsLeft = -1;
       }
-      // Main Wi-Fi / Holiday Config Button (y = 46..96)
-      else if (tx >= 20 && tx <= 300 && ty >= 46 && ty <= 96)
+      // Main Config Button ("Tap to configure")
+      else if (tx >= cfgX && tx <= (cfgX + cfgW) && ty >= cfgY && ty <= (cfgY + cfgH))
       {
         triggered = true;
       }
@@ -1448,6 +1460,7 @@ void openInAppSetup()
 {
   LcarsAudio::beepBoot();
   bool wasWeatherEnabled = gWeatherEnabled;
+  bool wasIslandPlusOne = gIslandPlusOne;
 
   // Check if mDNS is active
   bool mdnsOk = true;
@@ -1504,9 +1517,10 @@ void openInAppSetup()
   drawStaticBackgroundImage();
   drawWhere(false);
 
-  if (gWeatherEnabled && !wasWeatherEnabled)
+  if (gWeatherEnabled && (!wasWeatherEnabled || gIslandPlusOne != wasIslandPlusOne))
   {
     fetchDestinationWeather();
+    lastWeatherFetchMs = millis();
   }
   displaySSIDAndWhen();
   if (gWeatherEnabled)
