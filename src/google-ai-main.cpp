@@ -557,8 +557,28 @@ void initSprites()
 }
 void displayLines()
 {
-  tft.drawLine(0, TOP_LINE_Y, SCREEN_W - 1, TOP_LINE_Y, TFT_WHITE);
-  tft.drawLine(0, BOT_LINE_Y, SCREEN_W - 1, BOT_LINE_Y, TFT_WHITE);
+  // Smooth 7-step RGB565 gradient bridging the black bars into the photo
+  const uint16_t gradCols[7] = {
+      0x0000, // Pure black (matches top/bottom bars)
+      0x0841, // Very deep charcoal
+      0x10A2, // Dark slate
+      0x18E3, // Muted slate
+      0x2145, // Soft slate-blue
+      0x29A6, // Gentle dusk tint
+      0x31E7  // Subtle edge highlight
+  };
+
+  // Top fade: y = 17 (black) down to y = 23 (photo top edge)
+  for (int i = 0; i < 7; i++)
+  {
+    tft.drawFastHLine(0, TOP_LINE_Y + i, SCREEN_W, gradCols[i]);
+  }
+
+  // Bottom fade: y = 216 (photo bottom edge) down to y = 222 (black)
+  for (int i = 0; i < 7; i++)
+  {
+    tft.drawFastHLine(0, BOT_LINE_Y - i, SCREEN_W, gradCols[i]);
+  }
 }
 void drawStaticBackgroundImage()
 {
@@ -1343,9 +1363,9 @@ void wakeFromScreenSaver(bool isArrived)
 {
   inScreenSaver = false;
   tft.fillScreen(TFT_BLACK);
-  displayLines();
   displaySSIDAndWhen();
   drawStaticBackgroundImage();
+  displayLines();
   drawWhere(isArrived);
   drawWeatherBadge();
 }
@@ -1502,8 +1522,8 @@ void openInAppSetup()
 
   // Redraw main countdown screen cleanly
   tft.fillScreen(TFT_BLACK);
-  displayLines();
   drawStaticBackgroundImage();
+  displayLines();
   drawWhere(false);
 
   if (gWeatherEnabled && (!wasWeatherEnabled || gIslandPlusOne != wasIslandPlusOne))
@@ -1697,9 +1717,9 @@ void setup()
 
   // 10. Render static UI elements, persistent sprites & live weather
   initSprites();
-  displayLines();
   displaySSIDAndWhen();
   drawStaticBackgroundImage();
+  displayLines();
   drawWhere(false);
 
   fetchDestinationWeather();
