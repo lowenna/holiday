@@ -339,6 +339,7 @@ String formatPrettyDateTime(time_t t, bool includeSeconds = false)
     else if (day % 10 == 3)
       suffix = "rd";
   }
+  suffix = ""; // :( JJH as too big
 
   String res = String(days[tmVal.tm_wday]) + " " + String(day) + suffix + " " +
                String(months[tmVal.tm_mon]) + " ";
@@ -372,6 +373,9 @@ String formatPrettyDateTime(time_t t, bool includeSeconds = false)
 void displayCurrentTimeSprite(time_t rawLocal)
 {
   topTimeSprite.fillSprite(TFT_BLACK);
+  topTimeSprite.setFreeFont(nullptr);
+  topTimeSprite.setTextFont(2);
+  topTimeSprite.setTextSize(1);
 
   if (showDestLocalTime && hasDestUtcOffset)
   {
@@ -1100,7 +1104,11 @@ void displaySSIDAndWhen()
   tft.fillRect(0, BOT_TEXT_Y, SCREEN_W, 17, TFT_BLACK);
   drawWifiSignalBars(2, BOT_TEXT_Y + 1);
 
+  tft.setFreeFont(nullptr);
+  tft.setTextFont(2);
+  tft.setTextSize(1);
   tft.setTextDatum(TL_DATUM);
+
   if (gWeatherEnabled && weatherTempStr.length() > 0)
   {
     int x = 23;
