@@ -136,6 +136,10 @@ void showScreenError(const char *title, const char *detail, bool fullScreen = tr
   }
 }
 
+// Forward declarations for functions defined later in this file
+bool isValidDateTime(int hour, int mins, int day, int month, int year);
+void writePreferences(String hour, String mins, String day, String month, String year, String where);
+
 void handleOTAUpload()
 {
   HTTPUpload &upload = otaServer.upload();
@@ -167,6 +171,144 @@ void handleOTAUpload()
       showScreenError("OTA FAILED", "Firmware flash failed!", true, 3000);
     }
   }
+}
+
+bool setupOTA()
+{
+  bool mdnsOk = MDNS.begin(otaHostname);
+  if (mdnsOk)
+  {
+    MDNS.addService("http", "tcp", 80);
+  }
+
+  // Main Web Dashboard: Holiday Settings + Firmware OTA
+  otaServer.on("/", HTTP_GET, []()
+               {
+    char dateBuf[12];
+    snprintf(dateBuf, sizeof(dateBuf), "%04d-%02d-%02d", atoi(gYear), atoi(gMonth), atoi(gDay));
+
+    char timeBuf[8];
+    snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", atoi(gHour), atoi(gMins));
+
+    String html = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Holiday Countdown</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #111; color: #eee; margin: 0; padding: 16px; }
+    .card { background: #1c1c1e; max-width: 420px; margin: 0 auto 18px auto; padding: 20px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }
+    h2 { color: #4dd0e1; margin: 0 0 14px 0; font-size: 20px; }
+    label.field { display: block; text-align: left; font-size: 13px; color: #aaa; margin: 12px 0 4px 0; }
+    input[type=text], input[type=date], input[type=time] {
+      width: 100%; box-sizing: border-box; padding: 10px; border-radius: 8px;
+      border: 1px solid #333; background: #2c2c2e; color: #fff; font-size: 16px;
+    }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 16px; text-align: left; }
+    .chk { background: #2c2c2e; padding: 10px 12px; border-radius: 8px; display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
+    input[type=checkbox] { width: 18px; height: 18px; accent-color: #00acc1; }
+    button { width: 100%; margin-top: 18px; background: #00acc1; color: #fff; border: none; padding: 12px; font-size: 16px; font-weight: bold; border-radius: 8px; cursor: pointer; }
+    button:hover { background: #00838f; }
+    .ota-btn { background: #37474f; }
+    .ota-btn:hover { background: #455a64; }
+    input[type=file] { width: 100%; margin: 10px 0; color: #ccc; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>Holiday Settings</h2>
+    <form method="POST" action="/save">
+      <label class="field">Destination</label>
+      <input type="text" name="where" maxlength="20" value=")rawliteral" + String(gWhere) + R"rawliteral(" required>
+
+      <label class="field">Departure Date</label>
+      <input type="date" name="date" value=")rawliteral" + String(dateBuf) + R"rawliteral(" required>
+
+      <label class="field">Departure Time (UK)</label>
+      <input type="time" name="time" value=")rawliteral" + String(timeBuf) + R"rawliteral(" required>
+
+      <div class="grid">
+        <label class="chk"><input type="checkbox" name="ssaver" value="1" )rawliteral" + String(gScreensaverEnabled ? "checked" : "") + R"rawliteral(>Screensaver</label>
+        <label class="chk"><input type="checkbox" name="dim" value="1" )rawliteral" + String(gDimmingEnabled ? "checked" : "") + R"rawliteral(>Night Dim</label>
+        <label class="chk"><input type="checkbox" name="wxen" value="1" )rawliteral" + String(gWeatherEnabled ? "checked" : "") + R"rawliteral(>Weather</label>
+        <label class="chk"><input type="checkbox" name="isl1h" value="1" )rawliteral" + String(gIslandPlusOne ? "checked" : "") + R"rawliteral(>Island +1h</label>
+      </div>
+
+      <button type="submit">Save &amp; Reboot</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Firmware OTA Update</h2>
+    <p style="font-size:13px;color:#aaa;margin-top:0">Host: <b>)rawliteral" + String(otaHostname) + R"rawliteral(.local</b></p>
+    <form method="POST" action="/update" enctype="multipart/form-data">
+      <input type="file" name="update" accept=".bin" required>
+      <button type="submit" class="ota-btn">Upload &amp; Flash .bin</button>
+    </form>
+  </div>
+</body>
+</html>
+)rawliteral";
+
+    otaServer.send(200, "text/html", html); });
+
+  // Handle Browser Settings Form Submission
+  otaServer.on("/save", HTTP_POST, []()
+               {
+    String where = otaServer.arg("where");
+    String dateStr = otaServer.arg("date"); // Expected format: YYYY-MM-DD
+    String timeStr = otaServer.arg("time"); // Expected format: HH:MM
+
+    if (dateStr.length() < 10 || timeStr.length() < 5)
+    {
+      otaServer.send(400, "text/plain", "Invalid date or time format.");
+      return;
+    }
+
+    String year = dateStr.substring(0, 4);
+    String month = dateStr.substring(5, 7);
+    String day = dateStr.substring(8, 10);
+    String hour = timeStr.substring(0, 2);
+    String mins = timeStr.substring(3, 5);
+
+    if (!isValidDateTime(hour.toInt(), mins.toInt(), day.toInt(), month.toInt(), year.toInt()))
+    {
+      otaServer.send(400, "text/plain", "Date or time out of valid range.");
+      return;
+    }
+
+    // Save toggle switches to NVS first
+    gScreensaverEnabled = otaServer.hasArg("ssaver");
+    gDimmingEnabled = otaServer.hasArg("dim");
+    gWeatherEnabled = otaServer.hasArg("wxen");
+    gIslandPlusOne = otaServer.hasArg("isl1h");
+
+    prefs.begin("hol", false);
+    prefs.putBool("ssaver", gScreensaverEnabled);
+    prefs.putBool("dim", gDimmingEnabled);
+    prefs.putBool("wxen", gWeatherEnabled);
+    prefs.putBool("isl1h", gIslandPlusOne);
+    prefs.end();
+
+    // Send confirmation response to browser before ESP restarts
+    String resp = "<html><body style='font-family:sans-serif;background:#111;color:#4dd0e1;text-align:center;padding:40px'>"
+                  "<h2>Settings Saved!</h2><p style='color:#eee'>Rebooting device now...</p></body></html>";
+    otaServer.send(200, "text/html", resp);
+    delay(400);
+
+    // Save holiday date/time/destination, show confirmation on TFT, and reboot
+    writePreferences(hour, mins, day, month, year, where); });
+
+  otaServer.on("/update", HTTP_POST, []()
+               {
+    otaServer.send(200, "text/plain", Update.hasError() ? "Update Failed" : "Update OK! Rebooting...");
+    delay(1000);
+    ESP.restart(); }, handleOTAUpload);
+
+  otaServer.begin();
+  Serial.printf("Web UI & OTA Ready: http://%s.local (IP: %s)\n", otaHostname, WiFi.localIP().toString().c_str());
+  return mdnsOk;
 }
 
 void drawOtaProgressScreen(const char *statusText, int percent)
@@ -232,35 +374,6 @@ const char *otaIndexHtml = R"rawliteral(
 </body>
 </html>
 )rawliteral";
-
-bool setupOTA()
-{
-  bool mdnsOk = MDNS.begin(otaHostname);
-  if (mdnsOk)
-  {
-    MDNS.addService("http", "tcp", 80);
-  }
-
-  otaServer.on("/", HTTP_GET, []()
-               {
-    String html = "<html><body style='font-family:sans-serif;text-align:center;padding:40px'>"
-                  "<h2>" + String(gWhere) + " Countdown OTA</h2>"
-                  "<p>Host: <b>" + String(otaHostname) + ".local</b></p>"
-                  "<form method='POST' action='/update' enctype='multipart/form-data'>"
-                  "<input type='file' name='update' accept='.bin' required><br><br>"
-                  "<button type='submit'>Upload &amp; Flash</button></form></body></html>";
-    otaServer.send(200, "text/html", html); });
-
-  otaServer.on("/update", HTTP_POST, []()
-               {
-    otaServer.send(200, "text/plain", Update.hasError() ? "Update Failed" : "Update OK! Rebooting...");
-    delay(1000);
-    ESP.restart(); }, handleOTAUpload);
-
-  otaServer.begin();
-  Serial.printf("OTA Ready: http://%s.local (IP: %s)\n", otaHostname, WiFi.localIP().toString().c_str());
-  return mdnsOk;
-}
 
 long getEffectiveDestOffsetSec()
 {
