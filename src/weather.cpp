@@ -15,8 +15,8 @@ int16_t WHERE_Y = 40;
 int16_t WHERE_H = 26;
 
 static constexpr int16_t WX_SCREEN_W = 320;
-static constexpr int16_t HOURLY_Y = 94;
-static constexpr int16_t HOURLY_H = 52;
+static constexpr int16_t HOURLY_Y = 91;
+static constexpr int16_t HOURLY_H = 59; // 51px unified card + 8px bottom strip for page dots
 
 String weatherTempStr = "";
 String weatherCondStr = "";
@@ -255,23 +255,29 @@ void drawHourlyForecastBar()
     hSpr.setColorDepth(16);
     hSpr.createSprite(WX_SCREEN_W, HOURLY_H);
 
+    // Paint exact Maldives photo slice behind the sprite so box corners & dots blend seamlessly
     fillSpriteWithMaldivesSlice(hSpr, HOURLY_Y, HOURLY_H);
 
     const int slotW = 38;
     const int startX = 8;
+    const int boxH = 51;
 
     // Color-code each page: Cyan = 8h, Gold = Days 1-8, Green = Days 9-16
     uint16_t borderCol = TFT_DARKCYAN;
     uint16_t labelCol = TFT_CYAN;
+    uint16_t activeDotCol = TFT_CYAN;
+
     if (forecastViewMode == 1)
     {
         borderCol = TFT_GOLD;
         labelCol = TFT_YELLOW;
+        activeDotCol = TFT_GOLD;
     }
     else if (forecastViewMode == 2)
     {
         borderCol = TFT_DARKGREEN;
         labelCol = TFT_GREEN;
+        activeDotCol = TFT_GREEN;
     }
 
     hSpr.setTextDatum(TC_DATUM);
@@ -280,6 +286,9 @@ void drawHourlyForecastBar()
 
     for (int i = 0; i < 8; i++)
     {
+        if (isDaily && (startIndex + i >= 16))
+            continue;
+
         const ForecastSlot &slot = isDaily ? dailyForecast.at(startIndex + i) : hourlyForecast.at(i);
         if (!slot.valid)
             continue;
@@ -287,10 +296,11 @@ void drawHourlyForecastBar()
         int sx = startX + (i * slotW);
         int cx = sx + (slotW / 2);
 
-        hSpr.fillRoundRect(sx + 1, 0, slotW - 2, HOURLY_H, 5, TFT_NAVY);
-        hSpr.drawRoundRect(sx + 1, 0, slotW - 2, HOURLY_H, 5, borderCol);
+        // Individual rounded box for each hour/day
+        hSpr.fillRoundRect(sx + 1, 0, slotW - 2, boxH, 5, TFT_NAVY);
+        hSpr.drawRoundRect(sx + 1, 0, slotW - 2, boxH, 5, borderCol);
 
-        // 1. Header label ("17h" or "Mon")
+        // 1. Header label ("18h" or "Mon")
         hSpr.setTextColor(labelCol, TFT_NAVY);
         hSpr.drawString(slot.label, cx, 2, 1);
 
@@ -307,35 +317,40 @@ void drawHourlyForecastBar()
         hSpr.drawCircle(tx + tw + 1, 29, 1, TFT_WHITE);
         hSpr.setTextDatum(TC_DATUM);
 
-        // 4. Optional rainfall "5mm" on rainy days in daily views
+        // 4. Optional rainfall ("5mm") on rainy days in daily views
         if (isDaily && slot.precipMm > 0.1f)
         {
             int roundedMm = (int)roundf(slot.precipMm);
             String pStr = (roundedMm >= 1) ? (String(roundedMm) + "mm") : "<1mm";
             hSpr.setTextColor(TFT_CYAN, TFT_NAVY);
-            hSpr.drawString(pStr, cx, 40, 1);
+            hSpr.drawString(pStr, cx, 39, 1);
+        }
+    }
+
+    // 5. Page indicator dots centred below the boxes (y = 55)
+    int totalPages = (dailyForecastCount > 8) ? 3 : ((dailyForecastCount > 0) ? 2 : 1);
+    if (totalPages > 1)
+    {
+        const int dotSpacing = 10;
+        int startDotX = (WX_SCREEN_W / 2) - (((totalPages - 1) * dotSpacing) / 2);
+        int dotY = boxH + 4;
+
+        for (int p = 0; p < totalPages; p++)
+        {
+            int dx = startDotX + (p * dotSpacing);
+            if (p == forecastViewMode)
+            {
+                hSpr.fillCircle(dx, dotY, 2, activeDotCol);
+            }
+            else
+            {
+                hSpr.drawCircle(dx, dotY, 2, TFT_LIGHTGREY);
+            }
         }
     }
 
     hSpr.pushSprite(0, HOURLY_Y);
     hSpr.deleteSprite();
-}
-
-void drawWeatherBadge()
-{
-    if (!gWeatherEnabled)
-        return;
-
-    if (weatherTempStr.length() == 0)
-    {
-        Serial.println("[WX] Have no weather text to draw");
-        return;
-    }
-    Serial.printf("[WX] Updating bottom weather & forecast bar: %s deg %s\n",
-                  weatherTempStr.c_str(), weatherCondStr.c_str());
-
-    displaySSIDAndWhen();
-    drawHourlyForecastBar();
 }
 
 bool handleWeatherForecastTouch(uint16_t tx, uint16_t ty)
@@ -358,6 +373,23 @@ bool handleWeatherForecastTouch(uint16_t tx, uint16_t ty)
         }
     }
     return false;
+}
+
+void drawWeatherBadge()
+{
+    if (!gWeatherEnabled)
+        return;
+
+    if (weatherTempStr.length() == 0)
+    {
+        Serial.println("[WX] Have no weather text to draw");
+        return;
+    }
+    Serial.printf("[WX] Updating bottom weather & forecast bar: %s deg %s\n",
+                  weatherTempStr.c_str(), weatherCondStr.c_str());
+
+    displaySSIDAndWhen();
+    drawHourlyForecastBar();
 }
 
 void fetchDestinationWeather()
