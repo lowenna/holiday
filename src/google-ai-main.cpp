@@ -924,12 +924,12 @@ void drawSetupPortalScreen(const String &apName, bool showTimeoutHint)
   tft.drawString("SETUP MODE - WI-FI & HOLIDAY", SCREEN_W / 2, 13, 2);
 
   // Styled instruction card
-  tft.drawRoundRect(8, 34, 304, 174, 8, TFT_DARKCYAN);
+  tft.drawRoundRect(8, 34, 304, 172, 8, TFT_DARKCYAN);
   tft.setTextDatum(TL_DATUM);
   tft.setTextFont(2);
   tft.setTextSize(1);
 
-  int y = 42;
+  int y = 41;
   const int step = 22;
 
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
@@ -985,12 +985,22 @@ void drawSetupPortalScreen(const String &apName, bool showTimeoutHint)
   tft.setTextColor(TFT_GREEN, TFT_BLACK);
   tft.print("Save");
 
+  // Bottom-right Cancel button (x = 236..312, y = 213..235)
+  const int16_t cancelX = 236;
+  const int16_t cancelY = 213;
+  const int16_t cancelW = 76;
+  const int16_t cancelH = 22;
+  tft.drawRoundRect(cancelX, cancelY, cancelW, cancelH, 5, TFT_RED);
+  tft.fillRoundRect(cancelX + 1, cancelY + 1, cancelW - 2, cancelH - 2, 4, TFT_MAROON);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_WHITE, TFT_MAROON);
+  tft.drawString("Cancel", cancelX + (cancelW / 2), cancelY + (cancelH / 2), 2);
+  tft.setTextDatum(TL_DATUM);
+
   if (showTimeoutHint)
   {
-    tft.setTextDatum(MC_DATUM);
     tft.setTextColor(TFT_SILVER, TFT_BLACK);
-    tft.drawString("Portal timeout: 10 minutes", SCREEN_W / 2, 224, 2);
-    tft.setTextDatum(TL_DATUM);
+    tft.drawString("Portal timeout: 10 mins", 12, 216, 2);
   }
 }
 
@@ -1002,15 +1012,40 @@ void configModeCallback(WiFiManager *myWiFiManager)
 }
 
 // Runs the WiFiManager config portal non-blockingly while updating the live MM:SS countdown
-bool runNonBlockingPortal(WiFiManager &wm, unsigned long durationMs = 600000UL)
+// Returns true if the portal timed out OR was cancelled by the user
+bool runNonBlockingPortal(WiFiManager &wm, unsigned long durationMs = 600000UL, bool *wasCancelled = nullptr)
 {
+  if (wasCancelled != nullptr)
+  {
+    *wasCancelled = false;
+  }
+
   bool timedOut = false;
   unsigned long portalStartMs = millis();
   int lastSecShown = -1;
+  bool wasTouching = true; // Ignore held finger until lifted
 
   while (wm.getConfigPortalActive())
   {
     wm.process();
+
+    // Check for Cancel button tap (bottom-right: x = 232..316, y = 210..239)
+    uint16_t tx, ty;
+    bool touching = getTouchPixel(tx, ty);
+    if (touching && !wasTouching)
+    {
+      if (tx >= 232 && tx <= 316 && ty >= 210 && ty <= 239)
+      {
+        tone(AZTOUCH_BEEPER, 440, 80);
+        wm.stopConfigPortal();
+        if (wasCancelled != nullptr)
+        {
+          *wasCancelled = true;
+        }
+        return true;
+      }
+    }
+    wasTouching = touching;
 
     unsigned long elapsed = millis() - portalStartMs;
     int secsLeft = (elapsed < durationMs) ? (int)((durationMs - elapsed) / 1000) : 0;
@@ -1027,11 +1062,11 @@ bool runNonBlockingPortal(WiFiManager &wm, unsigned long durationMs = 600000UL)
                          String(mins < 10 ? "0" : "") + String(mins) + ":" +
                          String(secs < 10 ? "0" : "") + String(secs);
 
-      tft.fillRect(20, 214, 280, 22, TFT_BLACK);
-      tft.setTextDatum(MC_DATUM);
-      tft.setTextColor(secsLeft <= 30 ? TFT_RED : TFT_SILVER, TFT_BLACK);
-      tft.drawString(timerText, SCREEN_W / 2, 224, 2);
+      // Draw left-aligned on bottom bar so it never overlaps the Cancel button
+      tft.fillRect(8, 214, 222, 22, TFT_BLACK);
       tft.setTextDatum(TL_DATUM);
+      tft.setTextColor(secsLeft <= 30 ? TFT_RED : TFT_SILVER, TFT_BLACK);
+      tft.drawString(timerText, 12, 216, 2);
     }
 
     delay(10);
@@ -1272,6 +1307,88 @@ void updateAutoBacklight(time_t rawlocal, const struct tm &ukTm)
   }
 }
 
+void openInAppSetup()
+{
+  LcarsAudio::beepBoot();
+  bool wasWeatherEnabled = gWeatherEnabled;
+  bool wasIslandPlusOne = gIslandPlusOne;
+
+  // Check if mDNS is active
+  bool mdnsOk = true;
+  while (areWeConfiguring(mdnsOk))
+  {
+    otaServer.stop();
+
+    WiFiManagerParameter custom_hol_hour("hour", "Hour (0-23)", gHour, 2);
+    WiFiManagerParameter custom_hol_mins("mins", "Mins (0-59)", gMins, 2);
+    WiFiManagerParameter custom_hol_day("day", "Day (1-31)", gDay, 2);
+    WiFiManagerParameter custom_hol_month("month", "Month (1-12)", gMonth, 2);
+    WiFiManagerParameter custom_hol_year("year", "Year (YYYY)", gYear, 4);
+    WiFiManagerParameter custom_hol_where("where", "Destination", gWhere, 20);
+
+    WiFiManager wifiManager;
+    wifiManager.setSaveConfigCallback(saveConfigCallback);
+    wifiManager.setSaveParamsCallback(saveConfigCallback);
+    wifiManager.setBreakAfterConfig(true);
+    wifiManager.setConfigPortalTimeout(600);
+
+    wifiManager.addParameter(&custom_hol_hour);
+    wifiManager.addParameter(&custom_hol_mins);
+    wifiManager.addParameter(&custom_hol_day);
+    wifiManager.addParameter(&custom_hol_month);
+    wifiManager.addParameter(&custom_hol_year);
+    wifiManager.addParameter(&custom_hol_where);
+
+    String apName = String(otaHostname);
+    drawSetupPortalScreen(apName, false);
+
+    wifiManager.setConfigPortalBlocking(false);
+    wifiManager.startConfigPortal(apName.c_str());
+
+    bool portalCancelled = false;
+    bool portalTimedOut = runNonBlockingPortal(wifiManager, 600000UL, &portalCancelled);
+
+    wifiManager.setConfigPortalBlocking(true);
+    otaServer.begin();
+
+    if (portalCancelled)
+    {
+      continue; // Go back to the toggle buttons screen
+    }
+
+    if (shouldSaveConfig || !portalTimedOut)
+    {
+      writePreferences(
+          custom_hol_hour.getValue(),
+          custom_hol_mins.getValue(),
+          custom_hol_day.getValue(),
+          custom_hol_month.getValue(),
+          custom_hol_year.getValue(),
+          custom_hol_where.getValue());
+    }
+    break;
+  }
+
+  // Redraw main countdown screen cleanly
+  tft.fillScreen(TFT_BLACK);
+  displayLines();
+  drawStaticBackgroundImage();
+  drawWhere(false);
+
+  if (gWeatherEnabled && (!wasWeatherEnabled || gIslandPlusOne != wasIslandPlusOne))
+  {
+    fetchDestinationWeather();
+    lastWeatherFetchMs = millis();
+  }
+  displaySSIDAndWhen();
+  if (gWeatherEnabled)
+  {
+    drawWeatherBadge();
+  }
+
+  lastInteractionMillis = millis();
+}
+
 // ============================================================================
 // Setup & Loop
 // ============================================================================
@@ -1362,12 +1479,12 @@ void setup()
         custom_hol_where.getValue());
   }
 
-  // 6. Start OTA, then show combined OTA + "Tap Screen to Configure" screen for 10s
+  // 6. Start OTA, then show combined OTA + "Tap to configure" screen for 10s
   bool mdnsOk = setupOTA();
   bool portalRan = false;
   bool portalTimedOut = false;
 
-  if (areWeConfiguring(mdnsOk))
+  while (areWeConfiguring(mdnsOk))
   {
     portalRan = true;
     otaServer.stop();
@@ -1379,10 +1496,18 @@ void setup()
     wifiManager.setConfigPortalBlocking(false);
     wifiManager.startConfigPortal(apName.c_str());
 
-    portalTimedOut = runNonBlockingPortal(wifiManager, 600000UL);
+    bool portalCancelled = false;
+    portalTimedOut = runNonBlockingPortal(wifiManager, 600000UL, &portalCancelled);
 
     wifiManager.setConfigPortalBlocking(true);
     otaServer.begin();
+
+    if (portalCancelled)
+    {
+      portalRan = false;
+      continue; // Return to the toggle buttons screen
+    }
+    break;
   }
 
   tft.fillScreen(TFT_BLACK);
@@ -1454,81 +1579,6 @@ void setup()
   lastBacklightBoostMs = millis();
 
   Serial.println("setup() complete");
-}
-
-void openInAppSetup()
-{
-  LcarsAudio::beepBoot();
-  bool wasWeatherEnabled = gWeatherEnabled;
-  bool wasIslandPlusOne = gIslandPlusOne;
-
-  // Check if mDNS is active
-  bool mdnsOk = true;
-  if (areWeConfiguring(mdnsOk))
-  {
-    otaServer.stop();
-
-    WiFiManagerParameter custom_hol_hour("hour", "Hour (0-23)", gHour, 2);
-    WiFiManagerParameter custom_hol_mins("mins", "Mins (0-59)", gMins, 2);
-    WiFiManagerParameter custom_hol_day("day", "Day (1-31)", gDay, 2);
-    WiFiManagerParameter custom_hol_month("month", "Month (1-12)", gMonth, 2);
-    WiFiManagerParameter custom_hol_year("year", "Year (YYYY)", gYear, 4);
-    WiFiManagerParameter custom_hol_where("where", "Destination", gWhere, 20);
-
-    WiFiManager wifiManager;
-    wifiManager.setSaveConfigCallback(saveConfigCallback);
-    wifiManager.setSaveParamsCallback(saveConfigCallback);
-    wifiManager.setBreakAfterConfig(true);
-    wifiManager.setConfigPortalTimeout(600);
-
-    wifiManager.addParameter(&custom_hol_hour);
-    wifiManager.addParameter(&custom_hol_mins);
-    wifiManager.addParameter(&custom_hol_day);
-    wifiManager.addParameter(&custom_hol_month);
-    wifiManager.addParameter(&custom_hol_year);
-    wifiManager.addParameter(&custom_hol_where);
-
-    String apName = String(otaHostname);
-    drawSetupPortalScreen(apName, false);
-
-    wifiManager.setConfigPortalBlocking(false);
-    wifiManager.startConfigPortal(apName.c_str());
-
-    bool portalTimedOut = runNonBlockingPortal(wifiManager, 600000UL);
-
-    wifiManager.setConfigPortalBlocking(true);
-    otaServer.begin();
-
-    if (shouldSaveConfig || !portalTimedOut)
-    {
-      writePreferences(
-          custom_hol_hour.getValue(),
-          custom_hol_mins.getValue(),
-          custom_hol_day.getValue(),
-          custom_hol_month.getValue(),
-          custom_hol_year.getValue(),
-          custom_hol_where.getValue());
-    }
-  }
-
-  // Redraw main countdown screen cleanly
-  tft.fillScreen(TFT_BLACK);
-  displayLines();
-  drawStaticBackgroundImage();
-  drawWhere(false);
-
-  if (gWeatherEnabled && (!wasWeatherEnabled || gIslandPlusOne != wasIslandPlusOne))
-  {
-    fetchDestinationWeather();
-    lastWeatherFetchMs = millis();
-  }
-  displaySSIDAndWhen();
-  if (gWeatherEnabled)
-  {
-    drawWeatherBadge();
-  }
-
-  lastInteractionMillis = millis();
 }
 
 void loop()
