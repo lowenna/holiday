@@ -488,6 +488,21 @@ String formatPrettyDateTime(time_t t, bool includeSeconds = false)
   return res;
 }
 
+void drawSettingsGearIcon(TFT_eSprite &spr, int cx, int cy, uint16_t col)
+{
+  // Outer gear teeth (8 spokes)
+  for (int a = 0; a < 180; a += 45)
+  {
+    float rad = a * 0.0174533f;
+    int dx = (int)roundf(cosf(rad) * 6.0f);
+    int dy = (int)roundf(sinf(rad) * 6.0f);
+    spr.drawLine(cx - dx, cy - dy, cx + dx, cy + dy, col);
+  }
+  // Gear body & centre hole
+  spr.fillCircle(cx, cy, 4, col);
+  spr.fillCircle(cx, cy, 2, TFT_BLACK);
+}
+
 void displayCurrentTimeSprite(time_t rawLocal)
 {
   topTimeSprite.fillSprite(TFT_BLACK);
@@ -512,13 +527,16 @@ void displayCurrentTimeSprite(time_t rawLocal)
                      (destTm.tm_sec < 10 ? "0" : "") + String(destTm.tm_sec);
 
     topTimeSprite.setTextColor(TFT_CYAN, TFT_BLACK);
-    topTimeSprite.drawCentreString(timeStr, SCREEN_W / 2, 0, 2);
+    topTimeSprite.drawCentreString(timeStr, (SCREEN_W - 18) / 2, 0, 2);
   }
   else
   {
     topTimeSprite.setTextColor(TFT_GREEN, TFT_BLACK);
-    topTimeSprite.drawCentreString(formatPrettyDateTime(rawLocal, true), SCREEN_W / 2, 0, 2);
+    topTimeSprite.drawCentreString(formatPrettyDateTime(rawLocal, true), (SCREEN_W - 18) / 2, 0, 2);
   }
+
+  // Subtle settings gear in the top-right corner
+  drawSettingsGearIcon(topTimeSprite, SCREEN_W - 10, TOP_BAR_H / 2, TFT_SILVER);
 
   topTimeSprite.pushSprite(0, 0);
 }
@@ -1760,42 +1778,19 @@ void loop()
     }
   }
 
-  static unsigned long topHoldStartMs = 0;
-  static unsigned long lastHoldSeenMs = 0;
-  const unsigned long HOLD_DURATION_MS = 1500; // 1.5s hold = Setup, quick tap = Timezone toggle
-
-  if (touching && !inScreenSaver && ty <= 85)
+  // Top bar touch handling:
+  // 1. Top-right gear icon (x >= 285, y <= 35) opens setup
+  // 2. Rest of top bar (x < 285, y <= 35) toggles UK / Destination time
+  if (freshTap && !inScreenSaver && ty <= 35)
   {
-    lastHoldSeenMs = millis();
-    if (topHoldStartMs == 0)
+    if (tx >= 285)
     {
-      topHoldStartMs = millis();
-    }
-
-    unsigned long heldFor = millis() - topHoldStartMs;
-    if (heldFor >= 200)
-    {
-      int barW = map(constrain((int)heldFor, 200, (int)HOLD_DURATION_MS), 200, (int)HOLD_DURATION_MS, 0, SCREEN_W);
-      tft.drawFastHLine(0, TOP_LINE_Y, barW, TFT_CYAN);
-    }
-
-    if (heldFor >= HOLD_DURATION_MS)
-    {
-      topHoldStartMs = 0;
-      tft.drawFastHLine(0, TOP_LINE_Y, SCREEN_W, TFT_WHITE);
+      tone(AZTOUCH_BEEPER, 880, 45);
       openInAppSetup();
       lastRenderedSec = 0;
       return;
     }
-  }
-  else if (topHoldStartMs != 0 && (millis() - lastHoldSeenMs > 150))
-  {
-    unsigned long totalHeld = lastHoldSeenMs - topHoldStartMs;
-    topHoldStartMs = 0;
-    tft.drawFastHLine(0, TOP_LINE_Y, SCREEN_W, TFT_WHITE);
-
-    // Quick tap (< 600ms) toggles between UK Time and Destination Local Time
-    if (totalHeld < 600 && hasDestUtcOffset)
+    else if (hasDestUtcOffset)
     {
       showDestLocalTime = !showDestLocalTime;
       tone(AZTOUCH_BEEPER, showDestLocalTime ? 1047 : 784, 45);
