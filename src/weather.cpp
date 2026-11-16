@@ -7,6 +7,7 @@
 extern TFT_eSPI tft;
 extern char gWhere[];
 extern bool gWeatherEnabled;
+extern bool gIslandPlusOne;
 extern void fillSpriteWithMaldivesSlice(TFT_eSprite &spr, int16_t screenY, int16_t sliceH);
 extern void displaySSIDAndWhen();
 
@@ -355,6 +356,7 @@ void fetchDestinationWeather()
     WiFiClient client;
     HTTPClient http;
     http.setTimeout(6000);
+    http.useHTTP10(true);
 
     if (!hasCachedCoords)
     {
@@ -431,7 +433,7 @@ void fetchDestinationWeather()
                 hasCurrent = true;
             }
 
-            // 2. Parse next 8 hours
+            // 2. Parse next 8 hours (shifted by +1h if Island +1h mode is enabled)
             String hrKey = String(char(34)) + "hourly" + String(char(34)) + ":{";
             int hrIdx = wxPayload.indexOf(hrKey);
             if (hrIdx >= 0)
@@ -455,7 +457,7 @@ void fetchDestinationWeather()
                     int src = i + startOffset;
                     if (src < available)
                     {
-                        int hr = hours.at(src);
+                        int hr = (hours.at(src) + (gIslandPlusOne ? 1 : 0)) % 24;
                         hourlyForecast.at(i).label = (hr < 10 ? "0" : "") + String(hr) + "h";
                         hourlyForecast.at(i).tempC = (int)roundf(temps.at(src));
                         hourlyForecast.at(i).wmoCode = (int)roundf(codes.at(src));

@@ -97,7 +97,7 @@ char gWhere[21] = "Maldives";
 bool gScreensaverEnabled = true;
 bool gWeatherEnabled = true;
 bool gDimmingEnabled = true;
-
+bool gIslandPlusOne = false;
 time_t rawhol = 0;
 
 // ============================================================================
@@ -262,6 +262,11 @@ bool setupOTA()
   return mdnsOk;
 }
 
+long getEffectiveDestOffsetSec()
+{
+  return destUtcOffsetSec + (gIslandPlusOne ? 3600L : 0L);
+}
+
 // ============================================================================
 // Touch, Audio & Display Helpers
 // ============================================================================
@@ -379,7 +384,7 @@ void displayCurrentTimeSprite(time_t rawLocal)
 
   if (showDestLocalTime && hasDestUtcOffset)
   {
-    time_t destEpoch = rawLocal + destUtcOffsetSec;
+    time_t destEpoch = rawLocal + getEffectiveDestOffsetSec();
     struct tm destTm;
     gmtime_r(&destEpoch, &destTm);
 
@@ -516,7 +521,8 @@ void drawCountdownLeft(int days, int hours, int mins, int secs, bool showColon, 
   if (isArrived)
   {
     // Once arrived, show live local time at the destination in crisp cyan (HH:MM:SS)
-    time_t destEpoch = hasDestUtcOffset ? (rawlocal + destUtcOffsetSec) : rawlocal;
+    time_t destEpoch = hasDestUtcOffset ? (rawlocal + getEffectiveDestOffsetSec()) : rawlocal;
+
     struct tm destTm;
     gmtime_r(&destEpoch, &destTm);
 
@@ -609,20 +615,21 @@ bool areWeConfiguring(bool mdnsOk)
     tft.println("  http://" + String(otaHostname) + ".local");
   tft.println("  http://" + WiFi.localIP().toString());
 
-  // Main Wi-Fi / Holiday Config Button (y = 54 to 110)
-  tft.drawRoundRect(20, 54, 280, 56, 10, TFT_CYAN);
-  tft.fillRoundRect(22, 56, 276, 52, 8, TFT_NAVY);
+  // Main Wi-Fi / Holiday Config Button (y = 46 to 96)
+  tft.drawRoundRect(20, 46, 280, 50, 10, TFT_CYAN);
+  tft.fillRoundRect(22, 48, 276, 46, 8, TFT_NAVY);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_WHITE, TFT_NAVY);
-  tft.drawString("Tap here to change WiFi/Holiday", 160, 71, 2);
+  tft.drawString("Tap here to change WiFi/Holiday", 160, 61, 2);
   tft.setTextDatum(TL_DATUM);
 
-  // Three Compact Toggle Switch Rows
-  drawToggleRow(118, "Screensaver:", gScreensaverEnabled);
-  drawToggleRow(152, "Weather:", gWeatherEnabled);
-  drawToggleRow(186, "Night Dim:", gDimmingEnabled);
+  // Four Compact Toggle Switch Rows (30px spacing)
+  drawToggleRow(102, "Screensaver:", gScreensaverEnabled);
+  drawToggleRow(132, "Weather:", gWeatherEnabled);
+  drawToggleRow(162, "Night Dim:", gDimmingEnabled);
+  drawToggleRow(192, "Island +1h:", gIslandPlusOne);
 
-  tft.setCursor(4, 223);
+  tft.setCursor(4, 224);
   tft.setTextColor(TFT_YELLOW, TFT_BLACK);
   tft.print("(C) John Howard 2026");
 
@@ -633,60 +640,74 @@ bool areWeConfiguring(bool mdnsOk)
     if (secsLeft != lastSecsLeft)
     {
       lastSecsLeft = secsLeft;
-      tft.fillRect(40, 84, 240, 20, TFT_NAVY);
+      tft.fillRect(40, 73, 240, 18, TFT_NAVY);
       tft.setTextDatum(MC_DATUM);
       tft.setTextColor(TFT_YELLOW, TFT_NAVY);
-      tft.drawString("Starting in " + String(secsLeft) + "s...", 160, 93, 2);
+      tft.drawString("Starting in " + String(secsLeft) + "s...", 160, 81, 2);
       tft.setTextDatum(TL_DATUM);
     }
 
     bool touching = getTouchPixel(tx, ty);
     if (touching && !wasTouching)
     {
-      // Row 1: Screensaver toggle (y = 116..148)
-      if (tx >= 20 && tx <= 300 && ty >= 116 && ty <= 148)
+      // Row 1: Screensaver toggle (y = 100..129)
+      if (tx >= 20 && tx <= 300 && ty >= 100 && ty <= 129)
       {
         gScreensaverEnabled = !gScreensaverEnabled;
         prefs.begin("hol", false);
         prefs.putBool("ssaver", gScreensaverEnabled);
         prefs.end();
 
-        drawToggleRow(118, "Screensaver:", gScreensaverEnabled);
+        drawToggleRow(102, "Screensaver:", gScreensaverEnabled);
         tone(AZTOUCH_BEEPER, gScreensaverEnabled ? 880 : 440, 80);
 
         startAt = millis();
         lastSecsLeft = -1;
       }
-      // Row 2: Weather toggle (y = 150..182)
-      else if (tx >= 20 && tx <= 300 && ty >= 150 && ty <= 182)
+      // Row 2: Weather toggle (y = 130..159)
+      else if (tx >= 20 && tx <= 300 && ty >= 130 && ty <= 159)
       {
         gWeatherEnabled = !gWeatherEnabled;
         prefs.begin("hol", false);
         prefs.putBool("wxen", gWeatherEnabled);
         prefs.end();
 
-        drawToggleRow(152, "Weather:", gWeatherEnabled);
+        drawToggleRow(132, "Weather:", gWeatherEnabled);
         tone(AZTOUCH_BEEPER, gWeatherEnabled ? 880 : 440, 80);
 
         startAt = millis();
         lastSecsLeft = -1;
       }
-      // Row 3: Night Dimming toggle (y = 184..216)
-      else if (tx >= 20 && tx <= 300 && ty >= 184 && ty <= 216)
+      // Row 3: Night Dimming toggle (y = 160..189)
+      else if (tx >= 20 && tx <= 300 && ty >= 160 && ty <= 189)
       {
         gDimmingEnabled = !gDimmingEnabled;
         prefs.begin("hol", false);
         prefs.putBool("dim", gDimmingEnabled);
         prefs.end();
 
-        drawToggleRow(186, "Night Dim:", gDimmingEnabled);
+        drawToggleRow(162, "Night Dim:", gDimmingEnabled);
         tone(AZTOUCH_BEEPER, gDimmingEnabled ? 880 : 440, 80);
 
         startAt = millis();
         lastSecsLeft = -1;
       }
-      // Main Wi-Fi / Holiday Config Button (y = 54..110)
-      else if (tx >= 20 && tx <= 300 && ty >= 54 && ty <= 110)
+      // Row 4: Island +1h offset toggle (y = 190..220)
+      else if (tx >= 20 && tx <= 300 && ty >= 190 && ty <= 220)
+      {
+        gIslandPlusOne = !gIslandPlusOne;
+        prefs.begin("hol", false);
+        prefs.putBool("isl1h", gIslandPlusOne);
+        prefs.end();
+
+        drawToggleRow(192, "Island +1h:", gIslandPlusOne);
+        tone(AZTOUCH_BEEPER, gIslandPlusOne ? 880 : 440, 80);
+
+        startAt = millis();
+        lastSecsLeft = -1;
+      }
+      // Main Wi-Fi / Holiday Config Button (y = 46..96)
+      else if (tx >= 20 && tx <= 300 && ty >= 46 && ty <= 96)
       {
         triggered = true;
       }
@@ -746,6 +767,7 @@ void readPreferences()
   gScreensaverEnabled = prefs.getBool("ssaver", true);
   gWeatherEnabled = prefs.getBool("wxen", true);
   gDimmingEnabled = prefs.getBool("dim", true);
+  gIslandPlusOne = prefs.getBool("isl1h", false);
   prefs.end();
 
   if (lHour.length() == 0 && lMins.length() == 0 && lDay.length() == 0 &&
@@ -1194,7 +1216,7 @@ void updateAutoBacklight(time_t rawlocal, const struct tm &ukTm)
   // Use destination local time when available
   if (hasDestUtcOffset)
   {
-    time_t destEpoch = rawlocal + destUtcOffsetSec;
+    time_t destEpoch = rawlocal + getEffectiveDestOffsetSec();
     struct tm destTm;
     gmtime_r(&destEpoch, &destTm);
     hour = destTm.tm_hour;
