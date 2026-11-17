@@ -283,7 +283,7 @@ bool setupOTA()
       <label class="field">Departure Time (UK)</label>
       <input type="time" name="time" value=")rawliteral" + String(timeBuf) + R"rawliteral(" required>
 
-      <label class="field">Birthday Date (Local Time)</label>
+      <label class="field">Birthday Date (Ignore year)</label>
       <input type="date" name="bday" value=")rawliteral" + String(bdayBuf) + R"rawliteral(">
 
       <div class="grid">
@@ -698,44 +698,114 @@ void playBirthdayTune()
 
 void drawBirthdayPopupCard()
 {
-  const int16_t popW = 284;
-  const int16_t popH = 166;
+  const int16_t popW = 288;
+  const int16_t popH = 172;
   const int16_t popX = (SCREEN_W - popW) / 2;
-  const int16_t popY = 38;
+  const int16_t popY = 34;
 
-  tft.fillRoundRect(popX, popY, popW, popH, 10, TFT_NAVY);
-  tft.drawRoundRect(popX, popY, popW, popH, 10, TFT_GOLD);
-  tft.drawRoundRect(popX + 1, popY + 1, popW - 2, popH - 2, 9, TFT_MAGENTA);
+  // Deep midnight-navy card with double gold & magenta festive border
+  tft.fillRoundRect(popX, popY, popW, popH, 12, TFT_NAVY);
+  tft.drawRoundRect(popX, popY, popW, popH, 12, TFT_GOLD);
+  tft.drawRoundRect(popX + 2, popY + 2, popW - 4, popH - 4, 10, TFT_MAGENTA);
 
-  // Festive confetti dots
+  // Decorative confetti & sparkles around the edges (keeping the centre text zone clear)
   const uint16_t confettiCols[] = {TFT_GOLD, TFT_MAGENTA, TFT_CYAN, TFT_GREEN, TFT_ORANGE, TFT_YELLOW};
-  for (int i = 0; i < 28; i++)
+  for (int i = 0; i < 34; i++)
   {
-    int cx = popX + 14 + ((i * 53) % (popW - 28));
-    int cy = popY + 12 + ((i * 37) % (popH - 24));
-    tft.fillCircle(cx, cy, (i % 2) + 1, confettiCols[i % 6]);
+    int cx = popX + 12 + ((i * 61) % (popW - 24));
+    int cy = popY + 10 + ((i * 43) % (popH - 20));
+
+    // Skip the central text zone so lettering stays crisp
+    if (cx > popX + 48 && cx < popX + popW - 48 && cy > popY + 66 && cy < popY + 144)
+      continue;
+
+    uint16_t col = confettiCols[i % 6];
+    if (i % 3 == 0)
+    {
+      // Tiny diamond / streamer
+      tft.fillRect(cx, cy, 4, 2, col);
+    }
+    else if (i % 3 == 1)
+    {
+      // 4-point sparkle
+      tft.drawPixel(cx, cy, TFT_WHITE);
+      tft.drawLine(cx - 2, cy, cx + 2, cy, col);
+      tft.drawLine(cx, cy - 2, cx, cy + 2, col);
+    }
+    else
+    {
+      tft.fillCircle(cx, cy, 2, col);
+    }
   }
 
-  // Three festive balloons along the top
-  const int bx[] = {popX + 55, popX + 142, popX + 229};
-  const uint16_t bCol[] = {TFT_RED, TFT_MAGENTA, TFT_CYAN};
-  for (int i = 0; i < 3; i++)
+  // Left & Right Glossy Balloons with knots and wavy strings
+  const int bx[] = {popX + 46, popX + popW - 46};
+  const int by[] = {popY + 34, popY + 34};
+  const uint16_t bCol[] = {TFT_RED, TFT_CYAN};
+
+  for (int i = 0; i < 2; i++)
   {
-    tft.fillCircle(bx[i], popY + 34, 14, bCol[i]);
-    tft.drawCircle(bx[i], popY + 34, 14, TFT_WHITE);
-    tft.drawLine(bx[i], popY + 48, bx[i] - 3, popY + 62, TFT_SILVER);
+    int x = bx[i];
+    int y = by[i];
+
+    // Balloon body & subtle border
+    tft.fillCircle(x, y, 16, bCol[i]);
+    tft.drawCircle(x, y, 16, TFT_WHITE);
+
+    // Glossy shine highlight on upper-left of balloon
+    tft.fillCircle(x - 5, y - 6, 3, TFT_WHITE);
+
+    // Balloon knot triangle
+    tft.fillTriangle(x - 3, y + 16, x + 3, y + 16, x, y + 20, bCol[i]);
+
+    // Gentle S-curve string
+    tft.drawLine(x, y + 20, x - 3, y + 28, TFT_SILVER);
+    tft.drawLine(x - 3, y + 28, x + 2, y + 36, TFT_SILVER);
+    tft.drawLine(x + 2, y + 36, x - 1, y + 44, TFT_SILVER);
   }
 
-  // Main celebratory text
+  // Centre Birthday Cake & Lit Candle (between the two balloons)
+  int cakeCx = popX + (popW / 2);
+  int cakeBaseY = popY + 58;
+
+  // Cake plate
+  tft.fillRoundRect(cakeCx - 32, cakeBaseY, 64, 4, 2, TFT_SILVER);
+
+  // Bottom tier (strawberry pink/magenta with white icing trim)
+  tft.fillRoundRect(cakeCx - 26, cakeBaseY - 14, 52, 14, 3, TFT_MAGENTA);
+  tft.fillRect(cakeCx - 26, cakeBaseY - 14, 52, 4, TFT_WHITE);
+
+  // Top tier (golden sponge with cyan icing trim)
+  tft.fillRoundRect(cakeCx - 18, cakeBaseY - 26, 36, 12, 3, TFT_ORANGE);
+  tft.fillRect(cakeCx - 18, cakeBaseY - 26, 36, 3, TFT_CYAN);
+
+  // Candle & glowing flame
+  tft.fillRect(cakeCx - 2, cakeBaseY - 38, 4, 12, TFT_WHITE);
+  tft.drawFastHLine(cakeCx - 2, cakeBaseY - 34, 4, TFT_RED);
+  tft.drawFastHLine(cakeCx - 2, cakeBaseY - 30, 4, TFT_RED);
+
+  // Outer orange glow + inner bright yellow flame
+  tft.fillCircle(cakeCx, cakeBaseY - 43, 4, TFT_ORANGE);
+  tft.fillTriangle(cakeCx - 3, cakeBaseY - 42, cakeCx + 3, cakeBaseY - 42, cakeCx, cakeBaseY - 50, TFT_YELLOW);
+  tft.fillCircle(cakeCx, cakeBaseY - 43, 2, TFT_WHITE);
+
+  // Bold Celebration Text with subtle drop shadow
   tft.setFreeFont(nullptr);
   tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(TFT_GOLD, TFT_NAVY);
-  tft.drawString("HAPPY", popX + (popW / 2), popY + 86, 4);
-  tft.setTextColor(TFT_WHITE, TFT_NAVY);
-  tft.drawString("BIRTHDAY!", popX + (popW / 2), popY + 118, 4);
 
+  tft.setTextColor(TFT_BLACK, TFT_NAVY);
+  tft.drawString("HAPPY", cakeCx + 2, popY + 86, 4);
+  tft.setTextColor(TFT_GOLD, TFT_NAVY);
+  tft.drawString("HAPPY", cakeCx, popY + 84, 4);
+
+  tft.setTextColor(TFT_BLACK, TFT_NAVY);
+  tft.drawString("BIRTHDAY!", cakeCx + 2, popY + 118, 4);
+  tft.setTextColor(TFT_WHITE, TFT_NAVY);
+  tft.drawString("BIRTHDAY!", cakeCx, popY + 116, 4);
+
+  // Subtle footer hint
   tft.setTextColor(TFT_LIGHTGREY, TFT_NAVY);
-  tft.drawString("Tap anywhere to close", popX + (popW / 2), popY + popH - 13, 1);
+  tft.drawString("Tap anywhere to close", cakeCx, popY + popH - 13, 1);
   tft.setTextDatum(TL_DATUM);
 }
 
@@ -931,7 +1001,7 @@ void drawWhere(bool isArrived = false)
   bg.deleteSprite();
 }
 
-constexpr unsigned long BL_CLOCK_ONLY_DELAY_MS = 300000UL; // 30s after max dim, hide everything except the clock
+constexpr unsigned long BL_CLOCK_ONLY_DELAY_MS = 300000UL; // 5 mins now - 30s after max dim, hide everything except the clock
 bool inDimClockMode = false;
 
 void drawCountdownLeft(int days, int hours, int mins, int secs, bool showColon, bool isArrived, time_t rawlocal)
