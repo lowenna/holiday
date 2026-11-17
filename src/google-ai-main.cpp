@@ -56,7 +56,7 @@ constexpr int16_t TOUCH_MIN_X = 370;
 constexpr int16_t TOUCH_MIN_Y = 470;
 constexpr int16_t TOUCH_MAX_X = 3700;
 constexpr int16_t TOUCH_MAX_Y = 3600;
-constexpr int16_t TOUCH_MIN_Z = 10;
+constexpr int16_t TOUCH_MIN_Z = 250;
 
 // Screen layout coordinates (320x240 landscape)
 constexpr int16_t SCREEN_W = 320;
@@ -1468,9 +1468,9 @@ constexpr uint8_t TFT_BL_PIN = 15; // AZ-Touch MOD default backlight GPIO
 constexpr uint8_t TFT_BL_PIN = TFT_BL;
 #endif
 
-constexpr uint8_t BL_PWM_CHANNEL = 0;
+constexpr uint8_t BL_PWM_CHANNEL = 6;          // Channel 6 (Timer 3) avoids collision with tone() on Channel 0
 constexpr uint8_t BL_BRIGHT_DAY = 0;           // Active-LOW: 0 = 100% full brightness
-constexpr uint8_t BL_BRIGHT_NIGHT = 232;       // Active-LOW: 232 = ~9% dim mode (above transistor cut-off knee)
+constexpr uint8_t BL_BRIGHT_NIGHT = 232;       // Active-LOW: 232 = ~9% dim mode
 constexpr unsigned long BL_BOOST_MS = 15000UL; // Hold full brightness for 15s after touch
 constexpr unsigned long BL_FADE_MS = 30000UL;  // Fade gradually over 30 seconds
 
@@ -1479,8 +1479,8 @@ uint8_t currentBacklightLevel = BL_BRIGHT_DAY;
 
 void initBacklightPWM()
 {
-  ledcSetup(BL_PWM_CHANNEL, 31250, 8); // 31.25 kHz exact APB clock divisor eliminates scan-line ripples
-  ledcAttachPin(15, BL_PWM_CHANNEL);
+  ledcSetup(BL_PWM_CHANNEL, 31250, 8); // 31.25 kHz on dedicated Channel 6
+  ledcAttachPin(15, BL_PWM_CHANNEL);   // AZ-Touch MOD backlight is GPIO 15
   ledcWrite(BL_PWM_CHANNEL, BL_BRIGHT_DAY);
   currentBacklightLevel = BL_BRIGHT_DAY;
 }
@@ -1832,7 +1832,7 @@ void loop()
   bool freshTap = touching && !touchWasDown;
   touchWasDown = touching;
 
-  if (touching)
+  if (freshTap)
   {
     lastInteractionMillis = millis();
     lastBacklightBoostMs = millis();
@@ -1901,7 +1901,7 @@ void loop()
   }
 
   // Main countdown area touch handling (before arrival):
-  // Toggle between countdown (DD.HH:MM:SS) and destination local time (HH:MM:SS in gold)
+  // Toggle between countdown (DD.HH:MM:SS) and destination local time (HH:MM:SS in cyan)
   if (freshTap && !isArrived && hasDestUtcOffset &&
       ty >= COUNTDOWN_Y && ty <= (COUNTDOWN_Y + COUNTDOWN_H))
   {
