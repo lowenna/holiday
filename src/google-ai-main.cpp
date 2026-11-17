@@ -109,11 +109,18 @@ char gMins[3] = "00";
 char gDay[3] = "05";
 char gMonth[3] = "12";
 char gYear[5] = "2026";
-char gWhere[21] = "Maldives";
+char gWhere[21] = "Horubadhoo";
 bool gScreensaverEnabled = true;
 bool gWeatherEnabled = true;
 bool gDimmerEnabled = true;
 bool gIslandPlusOne = false;
+bool gBirthdayEnabled = false;
+int gBdayMonth = 1;
+int gBdayDay = 1;
+int gLastCelebratedBdayYear = -1;
+bool isBirthdayPopupOpen = false;
+unsigned long birthdayPopupOpenedMs = 0;
+bool triggerTestBirthday = false;
 time_t rawhol = 0;
 
 // ============================================================================
@@ -155,6 +162,10 @@ void showScreenError(const char *title, const char *detail, bool fullScreen = tr
 // Forward declarations for functions defined later in this file
 bool isValidDateTime(int hour, int mins, int day, int month, int year);
 void writePreferences(String hour, String mins, String day, String month, String year, String where);
+void displaySSIDAndWhen();
+void drawStaticBackgroundImage();
+void displayLines();
+void drawWhere(bool isArrived);
 
 void handleOTAUpload()
 {
@@ -198,6 +209,7 @@ void handleOTAUpload()
     Serial.println("OTA Update Aborted");
   }
 }
+
 bool setupOTA()
 {
   bool mdnsOk = MDNS.begin(otaHostname);
@@ -214,6 +226,9 @@ bool setupOTA()
 
     char timeBuf[8];
     snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", atoi(gHour), atoi(gMins));
+
+    char bdayBuf[12];
+    snprintf(bdayBuf, sizeof(bdayBuf), "%04d-%02d-%02d", atoi(gYear), gBdayMonth, gBdayDay);
 
     String html = R"rawliteral(
 <!DOCTYPE html>
@@ -235,6 +250,8 @@ bool setupOTA()
     input[type=checkbox] { width: 18px; height: 18px; accent-color: #00acc1; }
     button { width: 100%; margin-top: 18px; background: #00acc1; color: #fff; border: none; padding: 12px; font-size: 16px; font-weight: bold; border-radius: 8px; cursor: pointer; }
     button:hover { background: #00838f; }
+    .test-btn { background: #6a1b9a; margin-top: 10px; }
+    .test-btn:hover { background: #4a148c; }
     .ota-btn { background: #37474f; }
     .ota-btn:hover { background: #455a64; }
     input[type=file] {
@@ -250,7 +267,7 @@ bool setupOTA()
     }
     #progWrap { display: none; margin-top: 14px; background: #2c2c2e; border-radius: 8px; overflow: hidden; height: 22px; }
     #progBar { width: 0%; height: 100%; background: #00acc1; transition: width 0.2s; }
-    #otaStatus { font-size: 13px; color: #aaa; margin-top: 8px; text-align: center; }
+    #otaStatus, #bdayStatus { font-size: 13px; color: #aaa; margin-top: 8px; text-align: center; }
   </style>
 </head>
 <body>
@@ -266,15 +283,21 @@ bool setupOTA()
       <label class="field">Departure Time (UK)</label>
       <input type="time" name="time" value=")rawliteral" + String(timeBuf) + R"rawliteral(" required>
 
+      <label class="field">Birthday Date (Local Time)</label>
+      <input type="date" name="bday" value=")rawliteral" + String(bdayBuf) + R"rawliteral(">
+
       <div class="grid">
         <label class="chk"><input type="checkbox" name="ssaver" value="1" )rawliteral" + String(gScreensaverEnabled ? "checked" : "") + R"rawliteral(>Screensaver</label>
         <label class="chk"><input type="checkbox" name="dim" value="1" )rawliteral" + String(gDimmerEnabled ? "checked" : "") + R"rawliteral(>Dimmer</label>
         <label class="chk"><input type="checkbox" name="wxen" value="1" )rawliteral" + String(gWeatherEnabled ? "checked" : "") + R"rawliteral(>Weather</label>
         <label class="chk"><input type="checkbox" name="isl1h" value="1" )rawliteral" + String(gIslandPlusOne ? "checked" : "") + R"rawliteral(>Island +1h</label>
+        <label class="chk"><input type="checkbox" name="bdayen" value="1" )rawliteral" + String(gBirthdayEnabled ? "checked" : "") + R"rawliteral(>Birthday</label>
       </div>
 
       <button type="submit">Save &amp; Reboot</button>
     </form>
+    <button type="button" class="test-btn" id="testBdayBtn">Test Birthday Celebration</button>
+    <div id="bdayStatus"></div>
   </div>
 
   <div class="card">
@@ -289,6 +312,15 @@ bool setupOTA()
   </div>
 
   <script>
+    document.getElementById('testBdayBtn').addEventListener('click', function() {
+      const bStatus = document.getElementById('bdayStatus');
+      bStatus.textContent = 'Triggering birthday celebration on screen...';
+      fetch('/testbday', { method: 'POST' })
+        .then(function(r) { return r.text(); })
+        .then(function(txt) { bStatus.textContent = txt; })
+        .catch(function() { bStatus.textContent = 'Triggered!'; });
+    });
+
     const fwInput = document.getElementById('fwFile');
     const statusEl = document.getElementById('otaStatus');
     const progWrap = document.getElementById('progWrap');
@@ -339,6 +371,11 @@ bool setupOTA()
 )rawliteral";
 
     otaServer.send(200, "text/html", html); });
+  // Trigger an immediate Birthday Celebration test on the display
+  otaServer.on("/testbday", HTTP_POST, []()
+               {
+    triggerTestBirthday = true;
+    otaServer.send(200, "text/plain", "Birthday celebration triggered!"); });
 
   // Handle Browser Settings Form Submission
   otaServer.on("/save", HTTP_POST, []()
@@ -346,6 +383,7 @@ bool setupOTA()
     String where = otaServer.arg("where");
     String dateStr = otaServer.arg("date"); // Expected format: YYYY-MM-DD
     String timeStr = otaServer.arg("time"); // Expected format: HH:MM
+    String bdayStr = otaServer.arg("bday"); // Expected format: YYYY-MM-DD
 
     if (dateStr.length() < 10 || timeStr.length() < 5)
     {
@@ -365,17 +403,33 @@ bool setupOTA()
       return;
     }
 
-    // Save toggle switches to NVS first
+    // Save toggle switches & birthday date to NVS first
     gScreensaverEnabled = otaServer.hasArg("ssaver");
     gDimmerEnabled = otaServer.hasArg("dim");
     gWeatherEnabled = otaServer.hasArg("wxen");
     gIslandPlusOne = otaServer.hasArg("isl1h");
+    gBirthdayEnabled = otaServer.hasArg("bdayen");
+
+    if (bdayStr.length() >= 10)
+    {
+      int bm = bdayStr.substring(5, 7).toInt();
+      int bd = bdayStr.substring(8, 10).toInt();
+      if (bm >= 1 && bm <= 12 && bd >= 1 && bd <= 31)
+      {
+        gBdayMonth = bm;
+        gBdayDay = bd;
+      }
+    }
 
     prefs.begin("hol", false);
     prefs.putBool("ssaver", gScreensaverEnabled);
     prefs.putBool("dim", gDimmerEnabled);
     prefs.putBool("wxen", gWeatherEnabled);
     prefs.putBool("isl1h", gIslandPlusOne);
+    prefs.putBool("bdayen", gBirthdayEnabled);
+    prefs.putInt("bdaym", gBdayMonth);
+    prefs.putInt("bdayd", gBdayDay);
+    prefs.putInt("bdayyr", -1); // Reset yearly trigger flag on settings save
     prefs.end();
 
     // Send confirmation response to browser before ESP restarts
@@ -595,6 +649,122 @@ void drawSettingsGearIcon(TFT_eSprite &spr, int cx, int cy, uint16_t col)
   spr.fillCircle(cx, cy, 2, TFT_BLACK);
 }
 
+struct tm getActiveLocalTm(time_t rawLocal)
+{
+  struct tm resTm;
+  if (hasDestUtcOffset)
+  {
+    time_t destEpoch = rawLocal + getEffectiveDestOffsetSec();
+    gmtime_r(&destEpoch, &resTm);
+  }
+  else
+  {
+    localtime_r(&rawLocal, &resTm);
+  }
+  return resTm;
+}
+
+bool isBirthdayToday(time_t rawLocal)
+{
+  if (!gBirthdayEnabled)
+    return false;
+
+  struct tm localTm = getActiveLocalTm(rawLocal);
+  return ((localTm.tm_mon + 1) == gBdayMonth) && (localTm.tm_mday == gBdayDay);
+}
+
+void playBirthdayTune()
+{
+  // Classic "Happy Birthday" melody (notes in Hz & durations in ms)
+  const int notes[] = {
+      262, 262, 294, 262, 349, 330,
+      262, 262, 294, 262, 392, 349,
+      262, 262, 523, 440, 349, 330, 294,
+      466, 466, 440, 349, 392, 349};
+  const int durs[] = {
+      180, 120, 300, 300, 300, 550,
+      180, 120, 300, 300, 300, 550,
+      180, 120, 300, 300, 300, 300, 500,
+      180, 120, 300, 300, 300, 600};
+
+  const int count = sizeof(notes) / sizeof(notes[0]);
+  for (int i = 0; i < count; i++)
+  {
+    tone(AZTOUCH_BEEPER, notes[i], durs[i]);
+    delay(durs[i] + 35);
+  }
+  noTone(AZTOUCH_BEEPER);
+}
+
+void drawBirthdayPopupCard()
+{
+  const int16_t popW = 284;
+  const int16_t popH = 166;
+  const int16_t popX = (SCREEN_W - popW) / 2;
+  const int16_t popY = 38;
+
+  tft.fillRoundRect(popX, popY, popW, popH, 10, TFT_NAVY);
+  tft.drawRoundRect(popX, popY, popW, popH, 10, TFT_GOLD);
+  tft.drawRoundRect(popX + 1, popY + 1, popW - 2, popH - 2, 9, TFT_MAGENTA);
+
+  // Festive confetti dots
+  const uint16_t confettiCols[] = {TFT_GOLD, TFT_MAGENTA, TFT_CYAN, TFT_GREEN, TFT_ORANGE, TFT_YELLOW};
+  for (int i = 0; i < 28; i++)
+  {
+    int cx = popX + 14 + ((i * 53) % (popW - 28));
+    int cy = popY + 12 + ((i * 37) % (popH - 24));
+    tft.fillCircle(cx, cy, (i % 2) + 1, confettiCols[i % 6]);
+  }
+
+  // Three festive balloons along the top
+  const int bx[] = {popX + 55, popX + 142, popX + 229};
+  const uint16_t bCol[] = {TFT_RED, TFT_MAGENTA, TFT_CYAN};
+  for (int i = 0; i < 3; i++)
+  {
+    tft.fillCircle(bx[i], popY + 34, 14, bCol[i]);
+    tft.drawCircle(bx[i], popY + 34, 14, TFT_WHITE);
+    tft.drawLine(bx[i], popY + 48, bx[i] - 3, popY + 62, TFT_SILVER);
+  }
+
+  // Main celebratory text
+  tft.setFreeFont(nullptr);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_GOLD, TFT_NAVY);
+  tft.drawString("HAPPY", popX + (popW / 2), popY + 86, 4);
+  tft.setTextColor(TFT_WHITE, TFT_NAVY);
+  tft.drawString("BIRTHDAY!", popX + (popW / 2), popY + 118, 4);
+
+  tft.setTextColor(TFT_LIGHTGREY, TFT_NAVY);
+  tft.drawString("Tap anywhere to close", popX + (popW / 2), popY + popH - 13, 1);
+  tft.setTextDatum(TL_DATUM);
+}
+
+void triggerBirthdayCelebration(bool playSound)
+{
+  isWeatherPopupOpen = false;
+  isBirthdayPopupOpen = true;
+  birthdayPopupOpenedMs = millis();
+  drawBirthdayPopupCard();
+  if (playSound)
+  {
+    playBirthdayTune();
+  }
+}
+
+void closeBirthdayCelebration(bool isArrived)
+{
+  if (!isBirthdayPopupOpen)
+    return;
+
+  isBirthdayPopupOpen = false;
+  tft.fillScreen(TFT_BLACK);
+  displaySSIDAndWhen();
+  drawStaticBackgroundImage();
+  displayLines();
+  drawWhere(isArrived);
+  drawWeatherBadge();
+}
+
 void displayCurrentTimeSprite(time_t rawLocal)
 {
   topTimeSprite.fillSprite(TFT_BLACK);
@@ -602,7 +772,13 @@ void displayCurrentTimeSprite(time_t rawLocal)
   topTimeSprite.setTextFont(2);
   topTimeSprite.setTextSize(1);
 
-  if (showDestLocalTime && hasDestUtcOffset)
+  // On your birthday, alternate "HAPPY BIRTHDAY!" every 4 seconds with the live clock
+  if (isBirthdayToday(rawLocal) && ((rawLocal / 4) % 2 == 1))
+  {
+    topTimeSprite.setTextColor(TFT_GOLD, TFT_BLACK);
+    topTimeSprite.drawCentreString("HAPPY BIRTHDAY!", (SCREEN_W - 18) / 2, 0, 2);
+  }
+  else if (showDestLocalTime && hasDestUtcOffset)
   {
     time_t destEpoch = rawLocal + getEffectiveDestOffsetSec();
     struct tm destTm;
@@ -834,7 +1010,7 @@ void saveConfigCallback()
 }
 void drawToggleTile(int16_t tileX, int16_t tileY, int16_t tileW, const char *label, bool isEnabled)
 {
-  const int16_t tileH = 42;
+  const int16_t tileH = 38;
 
   tft.fillRoundRect(tileX, tileY, tileW, tileH, 6, TFT_BLACK);
   tft.drawRoundRect(tileX, tileY, tileW, tileH, 6, isEnabled ? TFT_DARKGREEN : TFT_DARKGREY);
@@ -842,17 +1018,17 @@ void drawToggleTile(int16_t tileX, int16_t tileY, int16_t tileW, const char *lab
   // Label on top-left of tile
   tft.setTextDatum(TL_DATUM);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.drawString(label, tileX + 8, tileY + 3, 2);
+  tft.drawString(label, tileX + 8, tileY + 2, 2);
 
   // "ON" / "OFF" status on bottom-left
   tft.setTextColor(isEnabled ? TFT_GREEN : TFT_RED, TFT_BLACK);
-  tft.drawString(isEnabled ? "ON" : "OFF", tileX + 8, tileY + 21, 2);
+  tft.drawString(isEnabled ? "ON" : "OFF", tileX + 8, tileY + 19, 2);
 
-  // Compact sliding pill switch on bottom-right (46x18)
+  // Compact sliding pill switch on bottom-right (46x16)
   const int16_t swW = 46;
-  const int16_t swH = 18;
+  const int16_t swH = 16;
   const int16_t swX = tileX + tileW - swW - 8;
-  const int16_t swY = tileY + 20;
+  const int16_t swY = tileY + 19;
 
   uint16_t trackCol = isEnabled ? TFT_DARKGREEN : TFT_DARKGREY;
   uint16_t borderCol = isEnabled ? TFT_GREEN : TFT_LIGHTGREY;
@@ -860,7 +1036,7 @@ void drawToggleTile(int16_t tileX, int16_t tileY, int16_t tileW, const char *lab
   tft.fillRoundRect(swX, swY, swW, swH, swH / 2, trackCol);
   tft.drawRoundRect(swX, swY, swW, swH, swH / 2, borderCol);
 
-  int16_t knobR = 6;
+  int16_t knobR = 5;
   int16_t knobY = swY + (swH / 2);
   int16_t knobX = isEnabled ? (swX + swW - knobR - 3) : (swX + knobR + 3);
   tft.fillCircle(knobX, knobY, knobR, TFT_WHITE);
@@ -876,19 +1052,19 @@ bool areWeConfiguring(bool mdnsOk)
   tft.fillScreen(TFT_BLACK);
   tft.setTextFont(2);
   tft.setTextSize(1);
-  tft.setCursor(4, 4);
+  tft.setCursor(4, 2);
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
-  tft.println("To update firmware, browse to:");
+  tft.println("Web UI / OTA:");
   tft.setTextColor(TFT_GREEN, TFT_BLACK);
   if (mdnsOk)
     tft.println("  http://" + String(otaHostname) + ".local");
   tft.println("  http://" + WiFi.localIP().toString());
 
-  // Smaller, centred Wi-Fi / Holiday Config Button (just below y = 85)
+  // Compact centred Wi-Fi / Holiday Config Button (y = 56..80)
   const int16_t cfgW = 180;
-  const int16_t cfgH = 26;
-  const int16_t cfgX = (SCREEN_W - cfgW) / 2; // x = 70..250
-  const int16_t cfgY = 86;
+  const int16_t cfgH = 24;
+  const int16_t cfgX = (SCREEN_W - cfgW) / 2;
+  const int16_t cfgY = 56;
   tft.drawRoundRect(cfgX, cfgY, cfgW, cfgH, 6, TFT_CYAN);
   tft.fillRoundRect(cfgX + 2, cfgY + 2, cfgW - 4, cfgH - 4, 5, TFT_NAVY);
   tft.setTextDatum(MC_DATUM);
@@ -896,21 +1072,25 @@ bool areWeConfiguring(bool mdnsOk)
   tft.drawString("Tap to configure", SCREEN_W / 2, cfgY + (cfgH / 2), 2);
   tft.setTextDatum(TL_DATUM);
 
-  // Balanced 2x2 Grid Coordinates (y = 118..207)
+  // 3x2 Grid Coordinates (y = 86..212)
   const int16_t col1X = 12;
   const int16_t col2X = 166;
   const int16_t tileW = 142;
-  const int16_t row1Y = 118;
-  const int16_t row2Y = 165;
-  const int16_t tileH = 42;
+  const int16_t row1Y = 86;
+  const int16_t row2Y = 129;
+  const int16_t row3Y = 172;
+  const int16_t tileH = 38;
 
-  // Left Column (2 toggles)
+  // Row 1
   drawToggleTile(col1X, row1Y, tileW, "Screensaver", gScreensaverEnabled);
-  drawToggleTile(col1X, row2Y, tileW, "Weather", gWeatherEnabled);
-
-  // Right Column (2 toggles)
   drawToggleTile(col2X, row1Y, tileW, "Dimmer", gDimmerEnabled);
+
+  // Row 2
+  drawToggleTile(col1X, row2Y, tileW, "Weather", gWeatherEnabled);
   drawToggleTile(col2X, row2Y, tileW, "Island +1h", gIslandPlusOne);
+
+  // Row 3
+  drawToggleTile(col1X, row3Y, tileW, "Birthday", gBirthdayEnabled);
 
   // Bottom line: Copyright left-aligned, Countdown right-aligned
   tft.setTextDatum(TL_DATUM);
@@ -934,7 +1114,7 @@ bool areWeConfiguring(bool mdnsOk)
     bool touching = getTouchPixel(tx, ty);
     if (touching && !wasTouching)
     {
-      // Top-Left: Screensaver
+      // Row 1 Left: Screensaver
       if (tx >= col1X && tx <= (col1X + tileW) && ty >= row1Y && ty <= (row1Y + tileH))
       {
         gScreensaverEnabled = !gScreensaverEnabled;
@@ -948,21 +1128,7 @@ bool areWeConfiguring(bool mdnsOk)
         startAt = millis();
         lastSecsLeft = -1;
       }
-      // Bottom-Left: Weather
-      else if (tx >= col1X && tx <= (col1X + tileW) && ty >= row2Y && ty <= (row2Y + tileH))
-      {
-        gWeatherEnabled = !gWeatherEnabled;
-        prefs.begin("hol", false);
-        prefs.putBool("wxen", gWeatherEnabled);
-        prefs.end();
-
-        drawToggleTile(col1X, row2Y, tileW, "Weather", gWeatherEnabled);
-        tone(AZTOUCH_BEEPER, gWeatherEnabled ? 880 : 440, 80);
-
-        startAt = millis();
-        lastSecsLeft = -1;
-      }
-      // Top-Right: Dimmer
+      // Row 1 Right: Dimmer
       else if (tx >= col2X && tx <= (col2X + tileW) && ty >= row1Y && ty <= (row1Y + tileH))
       {
         gDimmerEnabled = !gDimmerEnabled;
@@ -976,7 +1142,21 @@ bool areWeConfiguring(bool mdnsOk)
         startAt = millis();
         lastSecsLeft = -1;
       }
-      // Bottom-Right: Island +1h
+      // Row 2 Left: Weather
+      else if (tx >= col1X && tx <= (col1X + tileW) && ty >= row2Y && ty <= (row2Y + tileH))
+      {
+        gWeatherEnabled = !gWeatherEnabled;
+        prefs.begin("hol", false);
+        prefs.putBool("wxen", gWeatherEnabled);
+        prefs.end();
+
+        drawToggleTile(col1X, row2Y, tileW, "Weather", gWeatherEnabled);
+        tone(AZTOUCH_BEEPER, gWeatherEnabled ? 880 : 440, 80);
+
+        startAt = millis();
+        lastSecsLeft = -1;
+      }
+      // Row 2 Right: Island +1h
       else if (tx >= col2X && tx <= (col2X + tileW) && ty >= row2Y && ty <= (row2Y + tileH))
       {
         gIslandPlusOne = !gIslandPlusOne;
@@ -986,6 +1166,20 @@ bool areWeConfiguring(bool mdnsOk)
 
         drawToggleTile(col2X, row2Y, tileW, "Island +1h", gIslandPlusOne);
         tone(AZTOUCH_BEEPER, gIslandPlusOne ? 880 : 440, 80);
+
+        startAt = millis();
+        lastSecsLeft = -1;
+      }
+      // Row 3 Left: Birthday
+      else if (tx >= col1X && tx <= (col1X + tileW) && ty >= row3Y && ty <= (row3Y + tileH))
+      {
+        gBirthdayEnabled = !gBirthdayEnabled;
+        prefs.begin("hol", false);
+        prefs.putBool("bdayen", gBirthdayEnabled);
+        prefs.end();
+
+        drawToggleTile(col1X, row3Y, tileW, "Birthday", gBirthdayEnabled);
+        tone(AZTOUCH_BEEPER, gBirthdayEnabled ? 880 : 440, 80);
 
         startAt = millis();
         lastSecsLeft = -1;
@@ -1052,6 +1246,10 @@ void readPreferences()
   gWeatherEnabled = prefs.getBool("wxen", true);
   gDimmerEnabled = prefs.getBool("dim", true);
   gIslandPlusOne = prefs.getBool("isl1h", false);
+  gBirthdayEnabled = prefs.getBool("bdayen", false);
+  gBdayMonth = prefs.getInt("bdaym", 1);
+  gBdayDay = prefs.getInt("bdayd", 1);
+  gLastCelebratedBdayYear = prefs.getInt("bdayyr", -1);
   prefs.end();
 
   if (lHour.length() == 0 && lMins.length() == 0 && lDay.length() == 0 &&
@@ -1104,66 +1302,82 @@ void drawBootWelcomeScreen(const String &savedSsid)
   tft.fillScreen(TFT_BLACK);
 
   // Welcome Header Bar
-  tft.fillRect(0, 0, SCREEN_W, 28, TFT_NAVY);
-  tft.drawFastHLine(0, 28, SCREEN_W, TFT_CYAN);
+  tft.fillRect(0, 0, SCREEN_W, 24, TFT_NAVY);
+  tft.drawFastHLine(0, 24, SCREEN_W, TFT_CYAN);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_WHITE, TFT_NAVY);
-  tft.drawString("Holiday Countdown", SCREEN_W / 2, 14, 2);
+  tft.drawString("Holiday Countdown", SCREEN_W / 2, 12, 2);
 
-  // Preferences Card
-  tft.drawRoundRect(8, 36, SCREEN_W - 16, 94, 8, TFT_DARKCYAN);
+  // Preferences Card (y = 30..136)
+  tft.drawRoundRect(8, 30, SCREEN_W - 16, 106, 8, TFT_DARKCYAN);
   tft.setTextDatum(TL_DATUM);
   tft.setTextFont(2);
   tft.setTextSize(1);
 
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
-  tft.setCursor(16, 42);
+  tft.setCursor(16, 34);
   tft.print("Holiday Preferences:");
 
   if (gPrefStatus == PREF_VALID)
   {
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.setCursor(16, 64);
+    tft.setCursor(16, 53);
     tft.printf("Destination: %s", gWhere);
 
-    tft.setCursor(16, 84);
+    tft.setCursor(16, 72);
     tft.printf("Departure:   %s/%s/%s at %s:%s", gDay, gMonth, gYear, gHour, gMins);
 
+    tft.setCursor(16, 91);
+    tft.print("Birthday:    ");
+    if (gBirthdayEnabled)
+    {
+      tft.setTextColor(TFT_GREEN, TFT_BLACK);
+      tft.printf("Enabled (%02d/%02d)", gBdayDay, gBdayMonth);
+    }
+    else
+    {
+      tft.setTextColor(TFT_SILVER, TFT_BLACK);
+      tft.printf("Disabled (%02d/%02d)", gBdayDay, gBdayMonth);
+    }
+
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
-    tft.setCursor(16, 104);
+    tft.setCursor(16, 111);
     tft.print("Status: Configured");
   }
   else if (gPrefStatus == PREF_NOT_CONFIGURED)
   {
     tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-    tft.setCursor(16, 68);
+    tft.setCursor(16, 56);
     tft.print("Status: Not yet configured");
 
     tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-    tft.setCursor(16, 92);
-    tft.printf("Fallback default: %s (%s/%s/%s)", gWhere, gDay, gMonth, gYear);
+    tft.setCursor(16, 78);
+    tft.printf("Default: %s (%s/%s/%s)", gWhere, gDay, gMonth, gYear);
+
+    tft.setCursor(16, 100);
+    tft.printf("Birthday: %s (%02d/%02d)", gBirthdayEnabled ? "Enabled" : "Disabled", gBdayDay, gBdayMonth);
   }
   else
   {
     tft.setTextColor(TFT_RED, TFT_BLACK);
-    tft.setCursor(16, 68);
+    tft.setCursor(16, 62);
     tft.print("Status: Invalid settings found");
 
     tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-    tft.setCursor(16, 92);
+    tft.setCursor(16, 86);
     tft.print("Please reconfigure in setup portal");
   }
 
-  // Wi-Fi Connection Status Card
-  tft.drawRoundRect(8, 138, SCREEN_W - 16, 92, 8, TFT_DARKGREY);
+  // Wi-Fi Connection Status Card (y = 142..234)
+  tft.drawRoundRect(8, 142, SCREEN_W - 16, 92, 8, TFT_DARKGREY);
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
-  tft.setCursor(16, 146);
+  tft.setCursor(16, 148);
   tft.print("Wi-Fi Status:");
 
   if (savedSsid.length() > 0)
   {
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.setCursor(16, 168);
+    tft.setCursor(16, 169);
     tft.print("Attempting to connect to: ");
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
     tft.print(savedSsid);
@@ -1175,7 +1389,7 @@ void drawBootWelcomeScreen(const String &savedSsid)
   else
   {
     tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-    tft.setCursor(16, 168);
+    tft.setCursor(16, 169);
     tft.print("No saved Wi-Fi network found.");
 
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
@@ -1856,6 +2070,7 @@ void setup()
 
   Serial.println("setup() complete");
 }
+
 void loop()
 {
   static time_t lastRenderedSec = 0;
@@ -1893,6 +2108,55 @@ void loop()
     lastBacklightBoostMs = millis();
   }
 
+  // Handle web dashboard "Test Birthday Celebration" button
+  if (triggerTestBirthday)
+  {
+    triggerTestBirthday = false;
+    lastInteractionMillis = millis();
+    lastBacklightBoostMs = millis();
+    if (inScreenSaver)
+    {
+      wakeFromScreenSaver(isArrived);
+    }
+    if (inDimClockMode)
+    {
+      wakeFromDimClockMode(isArrived);
+    }
+    updateAutoBacklight(isArrived);
+    triggerBirthdayCelebration(true);
+    lastRenderedSec = 0;
+  }
+
+  // Automatic 08:30 destination local time birthday celebration (once per year)
+  if (gBirthdayEnabled && isBirthdayToday(rawlocal))
+  {
+    struct tm localTm = getActiveLocalTm(rawlocal);
+    int curYear = localTm.tm_year + 1900;
+    bool pastMorningWake = (localTm.tm_hour > 8) || (localTm.tm_hour == 8 && localTm.tm_min >= 30);
+
+    if (pastMorningWake && gLastCelebratedBdayYear != curYear)
+    {
+      gLastCelebratedBdayYear = curYear;
+      prefs.begin("hol", false);
+      prefs.putInt("bdayyr", curYear);
+      prefs.end();
+
+      lastInteractionMillis = millis();
+      lastBacklightBoostMs = millis();
+      if (inScreenSaver)
+      {
+        wakeFromScreenSaver(isArrived);
+      }
+      if (inDimClockMode)
+      {
+        wakeFromDimClockMode(isArrived);
+      }
+      updateAutoBacklight(isArrived);
+      triggerBirthdayCelebration(true);
+      lastRenderedSec = 0;
+    }
+  }
+
   // Smoothly update PWM backlight & clock-only dim mode every loop tick (~40 Hz)
   updateAutoBacklight(isArrived);
 
@@ -1901,7 +2165,7 @@ void loop()
   {
     lastWeatherFetchMs = millis();
     fetchDestinationWeather();
-    if (!inScreenSaver && !inDimClockMode && !isWeatherPopupOpen)
+    if (!inScreenSaver && !inDimClockMode && !isWeatherPopupOpen && !isBirthdayPopupOpen)
     {
       drawWeatherBadge();
     }
@@ -1930,6 +2194,17 @@ void loop()
     freshTap = false;
   }
 
+  // Close birthday popup on any tap or automatically after 20 seconds
+  if (isBirthdayPopupOpen)
+  {
+    if (freshTap || (millis() - birthdayPopupOpenedMs >= 20000UL))
+    {
+      closeBirthdayCelebration(isArrived);
+      lastRenderedSec = 0;
+      freshTap = false;
+    }
+  }
+
   // Auto-close weather detail popup after 15 seconds
   if (isWeatherPopupOpen && (millis() - weatherPopupOpenedMs >= 15000UL))
   {
@@ -1939,8 +2214,9 @@ void loop()
 
   // Top bar touch handling:
   // 1. Top-right gear icon (x >= 285, y <= 35) opens setup
-  // 2. Rest of top bar (x < 285, y <= 35) toggles UK / Destination time
-  if (freshTap && !inScreenSaver && !inDimClockMode && !isWeatherPopupOpen && ty <= 35)
+  // 2. On your birthday, tapping the top bar replays the celebration
+  // 3. Otherwise, rest of top bar (x < 285, y <= 35) toggles UK / Destination time
+  if (freshTap && !inScreenSaver && !inDimClockMode && !isWeatherPopupOpen && !isBirthdayPopupOpen && ty <= 35)
   {
     if (tx >= 285)
     {
@@ -1948,6 +2224,12 @@ void loop()
       openInAppSetup();
       lastRenderedSec = 0;
       return;
+    }
+    else if (isBirthdayToday(rawlocal))
+    {
+      triggerBirthdayCelebration(true);
+      lastRenderedSec = 0;
+      freshTap = false;
     }
     else if (hasDestUtcOffset)
     {
@@ -1960,6 +2242,7 @@ void loop()
   if (gScreensaverEnabled && (millis() - lastInteractionMillis >= SCREENSAVER_TIMEOUT_MS))
   {
     isWeatherPopupOpen = false;
+    isBirthdayPopupOpen = false;
     inDimClockMode = false;
     inScreenSaver = true;
     updateScreenSaverEyes(true);
@@ -1967,7 +2250,7 @@ void loop()
     return;
   }
 
-  if (freshTap && !inDimClockMode && handleWeatherForecastTouch(tx, ty))
+  if (freshTap && !inDimClockMode && !isBirthdayPopupOpen && handleWeatherForecastTouch(tx, ty))
   {
     tone(AZTOUCH_BEEPER, 880, 45);
     lastRenderedSec = 0;
@@ -1976,7 +2259,7 @@ void loop()
 
   // Main countdown area touch handling (before arrival):
   // Toggle between countdown (DD.HH:MM:SS) and destination local time (HH:MM:SS in cyan)
-  if (freshTap && !inDimClockMode && !isWeatherPopupOpen && !isArrived && hasDestUtcOffset &&
+  if (freshTap && !inDimClockMode && !isWeatherPopupOpen && !isBirthdayPopupOpen && !isArrived && hasDestUtcOffset &&
       ty >= COUNTDOWN_Y && ty <= (COUNTDOWN_Y + COUNTDOWN_H))
   {
     showCountdownAsLocalTime = !showCountdownAsLocalTime;
@@ -1996,6 +2279,7 @@ void loop()
       {
         holidayCelebrated = true;
         isWeatherPopupOpen = false;
+        isBirthdayPopupOpen = false;
         if (inDimClockMode)
         {
           wakeFromDimClockMode(true);
@@ -2015,7 +2299,7 @@ void loop()
     int diffMins = (totalSecs % 3600) / 60;
     int remSecs = totalSecs % 60;
 
-    if (!isWeatherPopupOpen)
+    if (!isWeatherPopupOpen && !isBirthdayPopupOpen)
     {
       drawCountdownLeft(diffDays, diffHours, diffMins, remSecs, blinkState, isArrived, rawlocal);
     }
