@@ -157,34 +157,43 @@ void handleOTAUpload()
   HTTPUpload &upload = otaServer.upload();
   if (upload.status == UPLOAD_FILE_START)
   {
+    Serial.printf("OTA Update Start: %s\n", upload.filename.c_str());
     otaInProgress = true;
     tft.fillScreen(TFT_BLACK);
     tft.setTextColor(TFT_CYAN, TFT_BLACK);
     tft.drawCentreString("OTA UPDATE IN PROGRESS...", 160, 100, 4);
     if (!Update.begin(UPDATE_SIZE_UNKNOWN))
+    {
       Update.printError(Serial);
+    }
   }
   else if (upload.status == UPLOAD_FILE_WRITE)
   {
     if (Update.write(upload.buf, upload.currentSize) != upload.currentSize)
+    {
       Update.printError(Serial);
+    }
   }
   else if (upload.status == UPLOAD_FILE_END)
   {
     if (Update.end(true))
     {
-      otaServer.send(200, "text/plain", "Update OK! Rebooting...");
-      delay(1000);
-      ESP.restart();
+      Serial.printf("OTA Update Success: %u bytes\n", upload.totalSize);
     }
     else
     {
+      Update.printError(Serial);
       otaInProgress = false;
       showScreenError("OTA FAILED", "Firmware flash failed!", true, 3000);
     }
   }
+  else if (upload.status == UPLOAD_FILE_ABORTED)
+  {
+    Update.end();
+    otaInProgress = false;
+    Serial.println("OTA Update Aborted");
+  }
 }
-
 bool setupOTA()
 {
   bool mdnsOk = MDNS.begin(otaHostname);
@@ -224,7 +233,20 @@ bool setupOTA()
     button:hover { background: #00838f; }
     .ota-btn { background: #37474f; }
     .ota-btn:hover { background: #455a64; }
-    input[type=file] { width: 100%; margin: 10px 0; color: #ccc; }
+    input[type=file] {
+      display: block; width: 100%; box-sizing: border-box;
+      padding: 12px; margin: 10px 0;
+      background: #2c2c2e; border: 1px solid #444; border-radius: 8px;
+      color: #eee; font-size: 16px;
+    }
+    input[type=file]::file-selector-button {
+      background: #00acc1; color: #fff; border: none;
+      padding: 8px 14px; margin-right: 12px;
+      border-radius: 6px; font-size: 15px; font-weight: bold;
+    }
+    #progWrap { display: none; margin-top: 14px; background: #2c2c2e; border-radius: 8px; overflow: hidden; height: 22px; }
+    #progBar { width: 0%; height: 100%; background: #00acc1; transition: width 0.2s; }
+    #otaStatus { font-size: 13px; color: #aaa; margin-top: 8px; text-align: center; }
   </style>
 </head>
 <body>
@@ -254,11 +276,60 @@ bool setupOTA()
   <div class="card">
     <h2>Firmware OTA Update</h2>
     <p style="font-size:13px;color:#aaa;margin-top:0">Host: <b>)rawliteral" + String(otaHostname) + R"rawliteral(.local</b></p>
-    <form method="POST" action="/update" enctype="multipart/form-data">
-      <input type="file" name="update" accept=".bin" required>
-      <button type="submit" class="ota-btn">Upload &amp; Flash .bin</button>
+    <form id="otaForm">
+      <input type="file" id="fwFile" name="update">
+      <button type="submit" class="ota-btn" id="uploadBtn">Upload &amp; Flash .bin</button>
     </form>
+    <div id="progWrap"><div id="progBar"></div></div>
+    <div id="otaStatus"></div>
   </div>
+
+  <script>
+    const fwInput = document.getElementById('fwFile');
+    const statusEl = document.getElementById('otaStatus');
+    const progWrap = document.getElementById('progWrap');
+    const progBar = document.getElementById('progBar');
+
+    document.getElementById('otaForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      if (!fwInput.files || fwInput.files.length === 0) {
+        statusEl.textContent = 'Please choose a .bin file first.';
+        return;
+      }
+      const formData = new FormData();
+      formData.append('update', fwInput.files[0]);
+
+      progWrap.style.display = 'block';
+      progBar.style.width = '0%';
+      statusEl.textContent = 'Uploading firmware...';
+      document.getElementById('uploadBtn').disabled = true;
+
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/update', true);
+      xhr.upload.onprogress = function(ev) {
+        if (ev.lengthComputable) {
+          const pct = Math.round((ev.loaded / ev.total) * 100);
+          progBar.style.width = pct + '%';
+          statusEl.textContent = 'Uploading: ' + pct + '%';
+        }
+      };
+      xhr.onload = function() {
+        if (xhr.status === 200) {
+          progBar.style.width = '100%';
+          statusEl.textContent = 'Update OK! Rebooting device...';
+          setTimeout(function() { location.reload(); }, 6000);
+        } else {
+          statusEl.textContent = 'Update failed (' + xhr.status + ')';
+          document.getElementById('uploadBtn').disabled = false;
+        }
+      };
+      xhr.onerror = function() {
+        statusEl.textContent = 'Upload complete or connection reset. Reloading...';
+        setTimeout(function() { location.reload(); }, 6000);
+      };
+      xhr.send(formData);
+    });
+  </script>
 </body>
 </html>
 )rawliteral";
@@ -314,9 +385,14 @@ bool setupOTA()
 
   otaServer.on("/update", HTTP_POST, []()
                {
-    otaServer.send(200, "text/plain", Update.hasError() ? "Update Failed" : "Update OK! Rebooting...");
+    bool ok = !Update.hasError() && otaInProgress;
+    otaServer.sendHeader("Connection", "close");
+    otaServer.send(200, "text/plain", ok ? "OK" : "FAIL");
     delay(1000);
-    ESP.restart(); }, handleOTAUpload);
+    if (ok)
+    {
+      ESP.restart();
+    } }, handleOTAUpload);
 
   otaServer.begin();
   Serial.printf("Web UI & OTA Ready: http://%s.local (IP: %s)\n", otaHostname, WiFi.localIP().toString().c_str());
