@@ -42,6 +42,7 @@ extern bool hasCachedCoords;                                      // weather.cpp
 extern long destUtcOffsetSec;                                     // weather.cpp
 extern bool hasDestUtcOffset;                                     // weather.cpp
 bool showDestLocalTime = false;
+bool showCountdownAsLocalTime = false;
 
 // ============================================================================
 // Hardware & Layout Constants
@@ -757,9 +758,9 @@ void drawCountdownLeft(int days, int hours, int mins, int secs, bool showColon, 
   countdownFgSprite.setTextSize(1);
   countdownFgSprite.setTextFont(7);
 
-  if (isArrived)
+  if (isArrived || (showCountdownAsLocalTime && hasDestUtcOffset))
   {
-    // Once arrived, show live local time at the destination in crisp cyan (HH:MM:SS)
+    // Show live local time at the destination in crisp cyan (HH:MM:SS)
     time_t destEpoch = hasDestUtcOffset ? (rawlocal + getEffectiveDestOffsetSec()) : rawlocal;
 
     struct tm destTm;
@@ -1075,7 +1076,7 @@ void drawBootWelcomeScreen(const String &savedSsid)
   tft.drawFastHLine(0, 28, SCREEN_W, TFT_CYAN);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_WHITE, TFT_NAVY);
-  tft.drawString("WELCOME - HOLIDAY COUNTDOWN", SCREEN_W / 2, 14, 2);
+  tft.drawString("Holiday Countdown", SCREEN_W / 2, 14, 2);
 
   // Preferences Card
   tft.drawRoundRect(8, 36, SCREEN_W - 16, 94, 8, TFT_DARKCYAN);
@@ -1479,7 +1480,7 @@ uint8_t currentBacklightLevel = BL_BRIGHT_DAY;
 void initBacklightPWM()
 {
   ledcSetup(BL_PWM_CHANNEL, 31250, 8); // 31.25 kHz exact APB clock divisor eliminates scan-line ripples
-  ledcAttachPin(TFT_BL_PIN, BL_PWM_CHANNEL);
+  ledcAttachPin(15, BL_PWM_CHANNEL);
   ledcWrite(BL_PWM_CHANNEL, BL_BRIGHT_DAY);
   currentBacklightLevel = BL_BRIGHT_DAY;
 }
@@ -1750,7 +1751,7 @@ void setup()
   tft.setTextSize(1);
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
   tft.setCursor(0, 0);
-  tft.println("Syncing time from the Internet...");
+  tft.println("Getting current time from the Internet...");
 
   struct tm timeinfo;
   int retry = 0;
@@ -1897,6 +1898,16 @@ void loop()
   if (freshTap && handleWeatherForecastTouch(tx, ty))
   {
     tone(AZTOUCH_BEEPER, 880, 45);
+  }
+
+  // Main countdown area touch handling (before arrival):
+  // Toggle between countdown (DD.HH:MM:SS) and destination local time (HH:MM:SS in gold)
+  if (freshTap && !isArrived && hasDestUtcOffset &&
+      ty >= COUNTDOWN_Y && ty <= (COUNTDOWN_Y + COUNTDOWN_H))
+  {
+    showCountdownAsLocalTime = !showCountdownAsLocalTime;
+    tone(AZTOUCH_BEEPER, showCountdownAsLocalTime ? 1047 : 784, 45);
+    lastRenderedSec = 0;
   }
 
   if (rawlocal != lastRenderedSec)
