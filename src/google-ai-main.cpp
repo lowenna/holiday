@@ -752,11 +752,23 @@ void drawWhere(bool isArrived = false)
   bg.deleteSprite();
 }
 
+constexpr unsigned long BL_CLOCK_ONLY_DELAY_MS = 10000UL; // 10s after max dim, hide everything except the clock
+bool inDimClockMode = false;
+
 void drawCountdownLeft(int days, int hours, int mins, int secs, bool showColon, bool isArrived, time_t rawlocal)
 {
-  countdownBgSprite.pushToSprite(&countdownFgSprite, 0, 0);
+  if (inDimClockMode)
+  {
+    countdownFgSprite.fillSprite(TFT_BLACK);
+  }
+  else
+  {
+    countdownBgSprite.pushToSprite(&countdownFgSprite, 0, 0);
+  }
+
   countdownFgSprite.setTextSize(1);
   countdownFgSprite.setTextFont(7);
+  countdownFgSprite.setTextColor(TFT_DARKCYAN);
 
   if (isArrived || (showCountdownAsLocalTime && hasDestUtcOffset))
   {
@@ -767,29 +779,46 @@ void drawCountdownLeft(int days, int hours, int mins, int secs, bool showColon, 
     gmtime_r(&destEpoch, &destTm);
 
     char sep = showColon ? ':' : ' ';
-    countdownFgSprite.setTextColor(TFT_DARKCYAN);
-    countdownFgSprite.setCursor(54, 0);
-    countdownFgSprite.printf("%02d%c", destTm.tm_hour, sep);
-    countdownFgSprite.setCursor(132, 0);
-    countdownFgSprite.printf("%02d%c", destTm.tm_min, sep);
-    countdownFgSprite.setCursor(210, 0);
-    countdownFgSprite.printf("%02d", destTm.tm_sec);
+    if (inDimClockMode)
+    {
+      char buf[16];
+      snprintf(buf, sizeof(buf), "%02d%c%02d%c%02d", destTm.tm_hour, sep, destTm.tm_min, sep, destTm.tm_sec);
+      countdownFgSprite.drawCentreString(buf, SCREEN_W / 2, 0, 7);
+    }
+    else
+    {
+      countdownFgSprite.setCursor(54, 0);
+      countdownFgSprite.printf("%02d%c", destTm.tm_hour, sep);
+      countdownFgSprite.setCursor(132, 0);
+      countdownFgSprite.printf("%02d%c", destTm.tm_min, sep);
+      countdownFgSprite.setCursor(210, 0);
+      countdownFgSprite.printf("%02d", destTm.tm_sec);
+    }
   }
   else
   {
-    countdownFgSprite.setTextColor(TFT_DARKCYAN);
     char sep = showColon ? ':' : ' ';
-    countdownFgSprite.setCursor(15, 0);
-    countdownFgSprite.printf("%02d.", days);
-    countdownFgSprite.setCursor(95, 0);
-    countdownFgSprite.printf("%02d%c", hours, sep);
-    countdownFgSprite.setCursor(170, 0);
-    countdownFgSprite.printf("%02d%c", mins, sep);
-    countdownFgSprite.setCursor(245, 0);
-    countdownFgSprite.printf("%02d", secs);
+    if (inDimClockMode)
+    {
+      char buf[20];
+      snprintf(buf, sizeof(buf), "%02d.%02d%c%02d%c%02d", days, hours, sep, mins, sep, secs);
+      countdownFgSprite.drawCentreString(buf, SCREEN_W / 2, 0, 7);
+    }
+    else
+    {
+      countdownFgSprite.setCursor(15, 0);
+      countdownFgSprite.printf("%02d.", days);
+      countdownFgSprite.setCursor(95, 0);
+      countdownFgSprite.printf("%02d%c", hours, sep);
+      countdownFgSprite.setCursor(170, 0);
+      countdownFgSprite.printf("%02d%c", mins, sep);
+      countdownFgSprite.setCursor(245, 0);
+      countdownFgSprite.printf("%02d", secs);
+    }
   }
 
-  countdownFgSprite.pushSprite(0, COUNTDOWN_Y);
+  int16_t targetY = inDimClockMode ? ((SCREEN_H - COUNTDOWN_H) / 2) : COUNTDOWN_Y;
+  countdownFgSprite.pushSprite(0, targetY);
 }
 
 // ============================================================================
@@ -1470,7 +1499,7 @@ constexpr uint8_t TFT_BL_PIN = TFT_BL;
 
 constexpr uint8_t BL_PWM_CHANNEL = 6;          // Channel 6 (Timer 3) avoids collision with tone() on Channel 0
 constexpr uint8_t BL_BRIGHT_DAY = 0;           // Active-LOW: 0 = 100% full brightness
-constexpr uint8_t BL_BRIGHT_NIGHT = 232;       // Active-LOW: 232 = ~9% dim mode
+constexpr uint8_t BL_BRIGHT_NIGHT = 215;       // Active-LOW: 215 = ~16% dim mode
 constexpr unsigned long BL_BOOST_MS = 15000UL; // Hold full brightness for 15s after touch
 constexpr unsigned long BL_FADE_MS = 30000UL;  // Fade gradually over 30 seconds
 
@@ -1485,10 +1514,28 @@ void initBacklightPWM()
   currentBacklightLevel = BL_BRIGHT_DAY;
 }
 
-void updateAutoBacklight()
+void wakeFromDimClockMode(bool isArrived)
+{
+  if (!inDimClockMode)
+    return;
+
+  inDimClockMode = false;
+  tft.fillScreen(TFT_BLACK);
+  displaySSIDAndWhen();
+  drawStaticBackgroundImage();
+  displayLines();
+  drawWhere(isArrived);
+  drawWeatherBadge();
+}
+
+void updateAutoBacklight(bool isArrived)
 {
   if (!gDimmerEnabled)
   {
+    if (inDimClockMode)
+    {
+      wakeFromDimClockMode(isArrived);
+    }
     if (currentBacklightLevel != BL_BRIGHT_DAY)
     {
       currentBacklightLevel = BL_BRIGHT_DAY;
@@ -1518,6 +1565,12 @@ void updateAutoBacklight()
   else
   {
     targetLevel = BL_BRIGHT_NIGHT;
+    if (!inDimClockMode && !inScreenSaver &&
+        sinceTouch >= (BL_BOOST_MS + BL_FADE_MS + BL_CLOCK_ONLY_DELAY_MS))
+    {
+      inDimClockMode = true;
+      tft.fillScreen(TFT_BLACK);
+    }
   }
 
   if (targetLevel != currentBacklightLevel)
@@ -1815,7 +1868,7 @@ void loop()
   struct tm timeinfo;
   if (!getLocalTime(&timeinfo, 100))
   {
-    if (!inScreenSaver)
+    if (!inScreenSaver && !inDimClockMode)
     {
       showScreenError("NTP ERROR", "NTP TIME SYNC LOST - RETRYING...", false, 0);
     }
@@ -1838,15 +1891,15 @@ void loop()
     lastBacklightBoostMs = millis();
   }
 
-  // Smoothly update PWM backlight every loop tick (~40 Hz)
-  updateAutoBacklight();
+  // Smoothly update PWM backlight & clock-only dim mode every loop tick (~40 Hz)
+  updateAutoBacklight(isArrived);
 
-  // Refresh destination weather every 30 minutes (even while screensaver is active)
+  // Refresh destination weather every 30 minutes (even while screensaver or dim clock is active)
   if (gWeatherEnabled && (millis() - lastWeatherFetchMs >= WEATHER_INTERVAL_MS))
   {
     lastWeatherFetchMs = millis();
     fetchDestinationWeather();
-    if (!inScreenSaver)
+    if (!inScreenSaver && !inDimClockMode)
     {
       drawWeatherBadge();
     }
@@ -1867,10 +1920,18 @@ void loop()
     }
   }
 
+  // Wake from clock-only dim mode on any tap, absorbing the wake-up tap
+  if (inDimClockMode && freshTap)
+  {
+    wakeFromDimClockMode(isArrived);
+    lastRenderedSec = 0;
+    freshTap = false;
+  }
+
   // Top bar touch handling:
   // 1. Top-right gear icon (x >= 285, y <= 35) opens setup
   // 2. Rest of top bar (x < 285, y <= 35) toggles UK / Destination time
-  if (freshTap && !inScreenSaver && ty <= 35)
+  if (freshTap && !inScreenSaver && !inDimClockMode && ty <= 35)
   {
     if (tx >= 285)
     {
@@ -1889,20 +1950,21 @@ void loop()
 
   if (gScreensaverEnabled && (millis() - lastInteractionMillis >= SCREENSAVER_TIMEOUT_MS))
   {
+    inDimClockMode = false;
     inScreenSaver = true;
     updateScreenSaverEyes(true);
     yield();
     return;
   }
 
-  if (freshTap && handleWeatherForecastTouch(tx, ty))
+  if (freshTap && !inDimClockMode && handleWeatherForecastTouch(tx, ty))
   {
     tone(AZTOUCH_BEEPER, 880, 45);
   }
 
   // Main countdown area touch handling (before arrival):
   // Toggle between countdown (DD.HH:MM:SS) and destination local time (HH:MM:SS in cyan)
-  if (freshTap && !isArrived && hasDestUtcOffset &&
+  if (freshTap && !inDimClockMode && !isArrived && hasDestUtcOffset &&
       ty >= COUNTDOWN_Y && ty <= (COUNTDOWN_Y + COUNTDOWN_H))
   {
     showCountdownAsLocalTime = !showCountdownAsLocalTime;
@@ -1921,8 +1983,15 @@ void loop()
       if (!holidayCelebrated)
       {
         holidayCelebrated = true;
-        drawWhere(true);
-        drawWeatherBadge();
+        if (inDimClockMode)
+        {
+          wakeFromDimClockMode(true);
+        }
+        else
+        {
+          drawWhere(true);
+          drawWeatherBadge();
+        }
         playHolidayFanfare();
       }
     }
@@ -1934,11 +2003,15 @@ void loop()
     int remSecs = totalSecs % 60;
 
     drawCountdownLeft(diffDays, diffHours, diffMins, remSecs, blinkState, isArrived, rawlocal);
-    displayCurrentTimeSprite(rawlocal);
 
-    if (rawlocal % 10 == 0)
+    if (!inDimClockMode)
     {
-      drawWifiSignalBars(2, BOT_TEXT_Y + 1);
+      displayCurrentTimeSprite(rawlocal);
+
+      if (rawlocal % 10 == 0)
+      {
+        drawWifiSignalBars(2, BOT_TEXT_Y + 1);
+      }
     }
   }
 
