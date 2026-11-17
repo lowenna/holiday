@@ -108,7 +108,7 @@ char gYear[5] = "2026";
 char gWhere[21] = "Maldives";
 bool gScreensaverEnabled = true;
 bool gWeatherEnabled = true;
-bool gDimmingEnabled = true;
+bool gDimmerEnabled = true;
 bool gIslandPlusOne = false;
 time_t rawhol = 0;
 
@@ -264,7 +264,7 @@ bool setupOTA()
 
       <div class="grid">
         <label class="chk"><input type="checkbox" name="ssaver" value="1" )rawliteral" + String(gScreensaverEnabled ? "checked" : "") + R"rawliteral(>Screensaver</label>
-        <label class="chk"><input type="checkbox" name="dim" value="1" )rawliteral" + String(gDimmingEnabled ? "checked" : "") + R"rawliteral(>Night Dim</label>
+        <label class="chk"><input type="checkbox" name="dim" value="1" )rawliteral" + String(gDimmerEnabled ? "checked" : "") + R"rawliteral(>Dimmer</label>
         <label class="chk"><input type="checkbox" name="wxen" value="1" )rawliteral" + String(gWeatherEnabled ? "checked" : "") + R"rawliteral(>Weather</label>
         <label class="chk"><input type="checkbox" name="isl1h" value="1" )rawliteral" + String(gIslandPlusOne ? "checked" : "") + R"rawliteral(>Island +1h</label>
       </div>
@@ -363,13 +363,13 @@ bool setupOTA()
 
     // Save toggle switches to NVS first
     gScreensaverEnabled = otaServer.hasArg("ssaver");
-    gDimmingEnabled = otaServer.hasArg("dim");
+    gDimmerEnabled = otaServer.hasArg("dim");
     gWeatherEnabled = otaServer.hasArg("wxen");
     gIslandPlusOne = otaServer.hasArg("isl1h");
 
     prefs.begin("hol", false);
     prefs.putBool("ssaver", gScreensaverEnabled);
-    prefs.putBool("dim", gDimmingEnabled);
+    prefs.putBool("dim", gDimmerEnabled);
     prefs.putBool("wxen", gWeatherEnabled);
     prefs.putBool("isl1h", gIslandPlusOne);
     prefs.end();
@@ -876,7 +876,7 @@ bool areWeConfiguring(bool mdnsOk)
   drawToggleTile(col1X, row2Y, tileW, "Weather", gWeatherEnabled);
 
   // Right Column (2 toggles)
-  drawToggleTile(col2X, row1Y, tileW, "Night Dim", gDimmingEnabled);
+  drawToggleTile(col2X, row1Y, tileW, "Dimmer", gDimmerEnabled);
   drawToggleTile(col2X, row2Y, tileW, "Island +1h", gIslandPlusOne);
 
   // Bottom line: Copyright left-aligned, Countdown right-aligned
@@ -929,16 +929,16 @@ bool areWeConfiguring(bool mdnsOk)
         startAt = millis();
         lastSecsLeft = -1;
       }
-      // Top-Right: Night Dim
+      // Top-Right: Dimmer
       else if (tx >= col2X && tx <= (col2X + tileW) && ty >= row1Y && ty <= (row1Y + tileH))
       {
-        gDimmingEnabled = !gDimmingEnabled;
+        gDimmerEnabled = !gDimmerEnabled;
         prefs.begin("hol", false);
-        prefs.putBool("dim", gDimmingEnabled);
+        prefs.putBool("dim", gDimmerEnabled);
         prefs.end();
 
-        drawToggleTile(col2X, row1Y, tileW, "Night Dim", gDimmingEnabled);
-        tone(AZTOUCH_BEEPER, gDimmingEnabled ? 880 : 440, 80);
+        drawToggleTile(col2X, row1Y, tileW, "Dimmer", gDimmerEnabled);
+        tone(AZTOUCH_BEEPER, gDimmerEnabled ? 880 : 440, 80);
 
         startAt = millis();
         lastSecsLeft = -1;
@@ -1017,7 +1017,7 @@ void readPreferences()
   String lWhere = prefs.getString("where", "");
   gScreensaverEnabled = prefs.getBool("ssaver", true);
   gWeatherEnabled = prefs.getBool("wxen", true);
-  gDimmingEnabled = prefs.getBool("dim", true);
+  gDimmerEnabled = prefs.getBool("dim", true);
   gIslandPlusOne = prefs.getBool("isl1h", false);
   prefs.end();
 
@@ -1469,7 +1469,7 @@ constexpr uint8_t TFT_BL_PIN = TFT_BL;
 
 constexpr uint8_t BL_PWM_CHANNEL = 0;
 constexpr uint8_t BL_BRIGHT_DAY = 0;           // Active-LOW: 0 = 100% full brightness
-constexpr uint8_t BL_BRIGHT_NIGHT = 246;       // Active-LOW: 246 = ~3.5% very dim night mode
+constexpr uint8_t BL_BRIGHT_NIGHT = 232;       // Active-LOW: 232 = ~9% dim mode (above transistor cut-off knee)
 constexpr unsigned long BL_BOOST_MS = 15000UL; // Hold full brightness for 15s after touch
 constexpr unsigned long BL_FADE_MS = 30000UL;  // Fade gradually over 30 seconds
 
@@ -1478,15 +1478,15 @@ uint8_t currentBacklightLevel = BL_BRIGHT_DAY;
 
 void initBacklightPWM()
 {
-  ledcSetup(BL_PWM_CHANNEL, 5000, 8); // 5 kHz, 8-bit resolution (0..255)
+  ledcSetup(BL_PWM_CHANNEL, 31250, 8); // 31.25 kHz exact APB clock divisor eliminates scan-line ripples
   ledcAttachPin(TFT_BL_PIN, BL_PWM_CHANNEL);
   ledcWrite(BL_PWM_CHANNEL, BL_BRIGHT_DAY);
   currentBacklightLevel = BL_BRIGHT_DAY;
 }
 
-void updateAutoBacklight(time_t rawlocal, const struct tm &ukTm)
+void updateAutoBacklight()
 {
-  if (!gDimmingEnabled)
+  if (!gDimmerEnabled)
   {
     if (currentBacklightLevel != BL_BRIGHT_DAY)
     {
@@ -1496,47 +1496,27 @@ void updateAutoBacklight(time_t rawlocal, const struct tm &ukTm)
     return;
   }
 
-  int hour = ukTm.tm_hour;
-  int minute = ukTm.tm_min;
-
-  // Use destination local time when available
-  if (hasDestUtcOffset)
+  unsigned long now = millis();
+  if (lastBacklightBoostMs == 0)
   {
-    time_t destEpoch = rawlocal + getEffectiveDestOffsetSec();
-    struct tm destTm;
-    gmtime_r(&destEpoch, &destTm);
-    hour = destTm.tm_hour;
-    minute = destTm.tm_min;
+    lastBacklightBoostMs = now;
   }
 
-  int minsOfDay = (hour * 60) + minute;
-  // Nighttime window at destination: 22:30 through 06:59
-  bool isNight = (minsOfDay >= (22 * 60 + 30)) || (minsOfDay < (7 * 60));
-
   uint8_t targetLevel = BL_BRIGHT_DAY;
+  unsigned long sinceTouch = now - lastBacklightBoostMs;
 
-  if (isNight)
+  if (sinceTouch < BL_BOOST_MS)
   {
-    unsigned long now = millis();
-    if (lastBacklightBoostMs == 0)
-    {
-      lastBacklightBoostMs = now;
-    }
-
-    unsigned long sinceTouch = now - lastBacklightBoostMs;
-    if (sinceTouch < BL_BOOST_MS)
-    {
-      targetLevel = BL_BRIGHT_DAY;
-    }
-    else if (sinceTouch < (BL_BOOST_MS + BL_FADE_MS))
-    {
-      unsigned long fadeElapsed = sinceTouch - BL_BOOST_MS;
-      targetLevel = (uint8_t)map((long)fadeElapsed, 0L, (long)BL_FADE_MS, (long)BL_BRIGHT_DAY, (long)BL_BRIGHT_NIGHT);
-    }
-    else
-    {
-      targetLevel = BL_BRIGHT_NIGHT;
-    }
+    targetLevel = BL_BRIGHT_DAY;
+  }
+  else if (sinceTouch < (BL_BOOST_MS + BL_FADE_MS))
+  {
+    unsigned long fadeElapsed = sinceTouch - BL_BOOST_MS;
+    targetLevel = (uint8_t)map((long)fadeElapsed, 0L, (long)BL_FADE_MS, (long)BL_BRIGHT_DAY, (long)BL_BRIGHT_NIGHT);
+  }
+  else
+  {
+    targetLevel = BL_BRIGHT_NIGHT;
   }
 
   if (targetLevel != currentBacklightLevel)
@@ -1858,7 +1838,7 @@ void loop()
   }
 
   // Smoothly update PWM backlight every loop tick (~40 Hz)
-  updateAutoBacklight(rawlocal, timeinfo);
+  updateAutoBacklight();
 
   // Refresh destination weather every 30 minutes (even while screensaver is active)
   if (gWeatherEnabled && (millis() - lastWeatherFetchMs >= WEATHER_INTERVAL_MS))
