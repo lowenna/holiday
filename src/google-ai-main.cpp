@@ -36,6 +36,9 @@ extern void updateScreenSaverEyes(bool);                          // eyes.cpp
 extern void drawWeatherBadge();                                   // weather.cpp
 extern void fetchDestinationWeather();                            // weather.cpp
 extern bool handleWeatherForecastTouch(uint16_t tx, uint16_t ty); // weather.cpp
+extern void closeWeatherDetailPopup(bool isArrived);              // weather.cpp
+extern bool isWeatherPopupOpen;                                   // weather.cpp
+extern unsigned long weatherPopupOpenedMs;                        // weather.cpp
 extern String weatherTempStr;                                     // weather.cpp
 extern String weatherCondStr;                                     // weather.cpp
 extern bool hasCachedCoords;                                      // weather.cpp
@@ -1853,7 +1856,6 @@ void setup()
 
   Serial.println("setup() complete");
 }
-
 void loop()
 {
   static time_t lastRenderedSec = 0;
@@ -1899,7 +1901,7 @@ void loop()
   {
     lastWeatherFetchMs = millis();
     fetchDestinationWeather();
-    if (!inScreenSaver && !inDimClockMode)
+    if (!inScreenSaver && !inDimClockMode && !isWeatherPopupOpen)
     {
       drawWeatherBadge();
     }
@@ -1928,10 +1930,17 @@ void loop()
     freshTap = false;
   }
 
+  // Auto-close weather detail popup after 15 seconds
+  if (isWeatherPopupOpen && (millis() - weatherPopupOpenedMs >= 15000UL))
+  {
+    closeWeatherDetailPopup(isArrived);
+    lastRenderedSec = 0;
+  }
+
   // Top bar touch handling:
   // 1. Top-right gear icon (x >= 285, y <= 35) opens setup
   // 2. Rest of top bar (x < 285, y <= 35) toggles UK / Destination time
-  if (freshTap && !inScreenSaver && !inDimClockMode && ty <= 35)
+  if (freshTap && !inScreenSaver && !inDimClockMode && !isWeatherPopupOpen && ty <= 35)
   {
     if (tx >= 285)
     {
@@ -1950,6 +1959,7 @@ void loop()
 
   if (gScreensaverEnabled && (millis() - lastInteractionMillis >= SCREENSAVER_TIMEOUT_MS))
   {
+    isWeatherPopupOpen = false;
     inDimClockMode = false;
     inScreenSaver = true;
     updateScreenSaverEyes(true);
@@ -1960,11 +1970,13 @@ void loop()
   if (freshTap && !inDimClockMode && handleWeatherForecastTouch(tx, ty))
   {
     tone(AZTOUCH_BEEPER, 880, 45);
+    lastRenderedSec = 0;
+    freshTap = false;
   }
 
   // Main countdown area touch handling (before arrival):
   // Toggle between countdown (DD.HH:MM:SS) and destination local time (HH:MM:SS in cyan)
-  if (freshTap && !inDimClockMode && !isArrived && hasDestUtcOffset &&
+  if (freshTap && !inDimClockMode && !isWeatherPopupOpen && !isArrived && hasDestUtcOffset &&
       ty >= COUNTDOWN_Y && ty <= (COUNTDOWN_Y + COUNTDOWN_H))
   {
     showCountdownAsLocalTime = !showCountdownAsLocalTime;
@@ -1983,6 +1995,7 @@ void loop()
       if (!holidayCelebrated)
       {
         holidayCelebrated = true;
+        isWeatherPopupOpen = false;
         if (inDimClockMode)
         {
           wakeFromDimClockMode(true);
@@ -2002,7 +2015,10 @@ void loop()
     int diffMins = (totalSecs % 3600) / 60;
     int remSecs = totalSecs % 60;
 
-    drawCountdownLeft(diffDays, diffHours, diffMins, remSecs, blinkState, isArrived, rawlocal);
+    if (!isWeatherPopupOpen)
+    {
+      drawCountdownLeft(diffDays, diffHours, diffMins, remSecs, blinkState, isArrived, rawlocal);
+    }
 
     if (!inDimClockMode)
     {
