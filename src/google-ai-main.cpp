@@ -64,14 +64,15 @@ constexpr int16_t TOUCH_MIN_Z = 250;
 // Screen layout coordinates (320x240 landscape)
 constexpr int16_t SCREEN_W = 320;
 constexpr int16_t SCREEN_H = 240;
-constexpr int16_t TOP_BAR_H = 16;
-constexpr int16_t TOP_LINE_Y = 17;
+constexpr int16_t TOP_BAR_H = 24; // Full 24px black gap above photo (y = 0..23)
+constexpr int16_t TOP_LINE_Y = 24;
 constexpr int16_t BG_IMAGE_Y = 24;
 constexpr int16_t BG_IMAGE_MAX_H = 209;
 constexpr int16_t COUNTDOWN_Y = 158;
 constexpr int16_t COUNTDOWN_H = 48;
-constexpr int16_t BOT_LINE_Y = 222;
-constexpr int16_t BOT_TEXT_Y = 223;
+constexpr int16_t BOT_LINE_Y = 216;
+constexpr int16_t BOT_TEXT_Y = 216; // Full 24px black gap below photo (y = 216..239)
+
 extern int16_t WHERE_Y;
 extern unsigned long WEATHER_INTERVAL_MS;
 extern unsigned long lastWeatherFetchMs;
@@ -603,7 +604,6 @@ String formatPrettyDateTime(time_t t, bool includeSeconds = false)
     else if (day % 10 == 3)
       suffix = "rd";
   }
-  suffix = ""; // :( JJH as too big
 
   String res = String(days[tmVal.tm_wday]) + " " + String(day) + suffix + " " +
                String(months[tmVal.tm_mon]) + " ";
@@ -633,19 +633,22 @@ String formatPrettyDateTime(time_t t, bool includeSeconds = false)
 
   return res;
 }
-
 void drawSettingsGearIcon(TFT_eSprite &spr, int cx, int cy, uint16_t col)
 {
-  // Outer gear teeth (8 spokes)
-  for (int a = 0; a < 180; a += 45)
+  // 1. Draw 8 thick rectangular teeth around the perimeter (outer radius ~6.5px)
+  for (int i = 0; i < 8; i++)
   {
-    float rad = a * 0.0174533f;
-    int dx = (int)roundf(cosf(rad) * 6.0f);
-    int dy = (int)roundf(sinf(rad) * 6.0f);
-    spr.drawLine(cx - dx, cy - dy, cx + dx, cy + dy, col);
+    float rad = (i * 45.0f) * 0.0174533f;
+    int tx = cx + (int)roundf(cosf(rad) * 5.2f);
+    int ty = cy + (int)roundf(sinf(rad) * 5.2f);
+    spr.fillRect(tx - 1, ty - 1, 3, 3, col);
   }
-  // Gear body & centre hole
-  spr.fillCircle(cx, cy, 4, col);
+
+  // 2. Main gear wheel body & inner rim highlight
+  spr.fillCircle(cx, cy, 5, col);
+  spr.drawCircle(cx, cy, 4, TFT_DARKGREY);
+
+  // 3. Hollow centre axle hole
   spr.fillCircle(cx, cy, 2, TFT_BLACK);
 }
 
@@ -841,12 +844,16 @@ void displayCurrentTimeSprite(time_t rawLocal)
   topTimeSprite.setFreeFont(nullptr);
   topTimeSprite.setTextFont(2);
   topTimeSprite.setTextSize(1);
+  topTimeSprite.setTextDatum(MC_DATUM);
+
+  int centerX = (SCREEN_W - 20) / 2;
+  int centerY = TOP_BAR_H / 2;
 
   // On your birthday, alternate "HAPPY BIRTHDAY!" every 4 seconds with the live clock
   if (isBirthdayToday(rawLocal) && ((rawLocal / 4) % 2 == 1))
   {
     topTimeSprite.setTextColor(TFT_GOLD, TFT_BLACK);
-    topTimeSprite.drawCentreString("HAPPY BIRTHDAY!", (SCREEN_W - 18) / 2, 0, 2);
+    topTimeSprite.drawString("HAPPY BIRTHDAY!", centerX, centerY, 2);
   }
   else if (showDestLocalTime && hasDestUtcOffset)
   {
@@ -858,23 +865,37 @@ void displayCurrentTimeSprite(time_t rawLocal)
     const char *months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
                             "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 
+    int dDay = destTm.tm_mday;
+    const char *dSuffix = "th";
+    if (dDay % 100 < 11 || dDay % 100 > 13)
+    {
+      if (dDay % 10 == 1)
+        dSuffix = "st";
+      else if (dDay % 10 == 2)
+        dSuffix = "nd";
+      else if (dDay % 10 == 3)
+        dSuffix = "rd";
+    }
+
     String timeStr = String(gWhere) + " " + String(days[destTm.tm_wday]) + " " +
-                     String(destTm.tm_mday) + " " + String(months[destTm.tm_mon]) + " " +
+                     String(dDay) + dSuffix + " " + String(months[destTm.tm_mon]) + " " +
                      (destTm.tm_hour < 10 ? "0" : "") + String(destTm.tm_hour) + ":" +
                      (destTm.tm_min < 10 ? "0" : "") + String(destTm.tm_min) + ":" +
                      (destTm.tm_sec < 10 ? "0" : "") + String(destTm.tm_sec);
 
     topTimeSprite.setTextColor(TFT_CYAN, TFT_BLACK);
-    topTimeSprite.drawCentreString(timeStr, (SCREEN_W - 18) / 2, 0, 2);
+    topTimeSprite.drawString(timeStr, centerX, centerY, 2);
   }
   else
   {
     topTimeSprite.setTextColor(TFT_GREEN, TFT_BLACK);
-    topTimeSprite.drawCentreString(formatPrettyDateTime(rawLocal, true), (SCREEN_W - 18) / 2, 0, 2);
+    topTimeSprite.drawString(formatPrettyDateTime(rawLocal, true), centerX, centerY, 2);
   }
 
-  // Subtle settings gear in the top-right corner
-  drawSettingsGearIcon(topTimeSprite, SCREEN_W - 10, TOP_BAR_H / 2, TFT_SILVER);
+  topTimeSprite.setTextDatum(TL_DATUM);
+
+  // Realistic settings gear aligned vertically with the centred text
+  drawSettingsGearIcon(topTimeSprite, SCREEN_W - 11, centerY, TFT_SILVER);
 
   topTimeSprite.pushSprite(0, 0);
 }
@@ -895,6 +916,7 @@ void initSprites()
 }
 void displayLines()
 {
+  return; // Removed this
   // Smooth 7-step RGB565 gradient bridging the black bars into the photo
   const uint16_t gradCols[7] = {
       0x0000, // Pure black (matches top/bottom bars)
@@ -1834,29 +1856,33 @@ void drawWifiSignalBars(int x, int y)
 
 void displaySSIDAndWhen()
 {
-  tft.fillRect(0, BOT_TEXT_Y, SCREEN_W, 17, TFT_BLACK);
-  drawWifiSignalBars(2, BOT_TEXT_Y + 1);
+  const int16_t barH = SCREEN_H - BOT_TEXT_Y;
+  const int16_t midY = BOT_TEXT_Y + (barH / 2);
+
+  tft.fillRect(0, BOT_TEXT_Y, SCREEN_W, barH, TFT_BLACK);
+  drawWifiSignalBars(2, midY - 7);
 
   tft.setFreeFont(nullptr);
   tft.setTextFont(2);
   tft.setTextSize(1);
-  tft.setTextDatum(TL_DATUM);
+  tft.setTextDatum(ML_DATUM);
 
   if (gWeatherEnabled && weatherTempStr.length() > 0)
   {
     int x = 23;
     tft.setTextColor(TFT_CYAN, TFT_BLACK);
-    tft.drawString(weatherTempStr, x, BOT_TEXT_Y, 2);
+    tft.drawString(weatherTempStr, x, midY, 2);
 
     int tempW = tft.textWidth(weatherTempStr, 2);
-    tft.drawCircle(x + tempW + 2, BOT_TEXT_Y + 3, 2, TFT_CYAN);
+    tft.drawCircle(x + tempW + 2, midY - 4, 2, TFT_CYAN);
 
-    tft.drawString(weatherCondStr, x + tempW + 6, BOT_TEXT_Y, 2);
+    // Keep "C Partly cloudy" in TFT_CYAN to match the temperature and degree symbol
+    tft.drawString(weatherCondStr, x + tempW + 6, midY, 2);
   }
   else
   {
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
-    tft.drawString(WiFi.SSID(), 23, BOT_TEXT_Y, 2);
+    tft.drawString(WiFi.SSID(), 23, midY, 2);
   }
 
   // Only show target holiday date/time on the bottom right if the countdown hasn't elapsed yet
@@ -1866,8 +1892,8 @@ void displaySSIDAndWhen()
   if (!timerElapsed)
   {
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
-    tft.setTextDatum(TR_DATUM);
-    tft.drawString(formatPrettyDateTime(rawhol), SCREEN_W - 1, BOT_TEXT_Y, 2);
+    tft.setTextDatum(MR_DATUM);
+    tft.drawString(formatPrettyDateTime(rawhol), SCREEN_W - 2, midY, 2);
   }
   tft.setTextDatum(TL_DATUM);
 }
@@ -2391,12 +2417,12 @@ void loop()
   }
 
   // Top bar touch handling:
-  // 1. Top-right gear icon (x >= 285, y <= 35) opens setup
+  // 1. Larger top-right gear icon zone (x >= 255, y <= 40) opens setup
   // 2. On your birthday, tapping the top bar replays the celebration
-  // 3. Otherwise, rest of top bar (x < 285, y <= 35) toggles UK / Destination time
-  if (freshTap && !inScreenSaver && !inDimClockMode && !isWeatherPopupOpen && !isBirthdayPopupOpen && ty <= 35)
+  // 3. Otherwise, rest of top bar (x < 255, y <= 40) toggles UK / Destination time
+  if (freshTap && !inScreenSaver && !inDimClockMode && !isWeatherPopupOpen && !isBirthdayPopupOpen && ty <= 40)
   {
-    if (tx >= 285)
+    if (tx >= 255)
     {
       tone(AZTOUCH_BEEPER, 880, 45);
       openInAppSetup();
@@ -2488,7 +2514,7 @@ void loop()
 
       if (rawlocal % 10 == 0)
       {
-        drawWifiSignalBars(2, BOT_TEXT_Y + 1);
+        drawWifiSignalBars(2, 221);
       }
     }
   }
