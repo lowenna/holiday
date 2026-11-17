@@ -752,7 +752,7 @@ void drawWhere(bool isArrived = false)
   bg.deleteSprite();
 }
 
-constexpr unsigned long BL_CLOCK_ONLY_DELAY_MS = 10000UL; // 10s after max dim, hide everything except the clock
+constexpr unsigned long BL_CLOCK_ONLY_DELAY_MS = 300000UL; // 30s after max dim, hide everything except the clock
 bool inDimClockMode = false;
 
 void drawCountdownLeft(int days, int hours, int mins, int secs, bool showColon, bool isArrived, time_t rawlocal)
@@ -1190,7 +1190,7 @@ void drawSetupPortalScreen(const String &apName, bool showTimeoutHint)
   tft.drawFastHLine(0, 26, SCREEN_W, TFT_CYAN);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_WHITE, TFT_NAVY);
-  tft.drawString("SETUP MODE - WI-FI & HOLIDAY", SCREEN_W / 2, 13, 2);
+  tft.drawString("Setup & Configure", SCREEN_W / 2, 13, 2);
 
   // Styled instruction card
   tft.drawRoundRect(8, 34, 304, 172, 8, TFT_DARKCYAN);
@@ -1499,7 +1499,7 @@ constexpr uint8_t TFT_BL_PIN = TFT_BL;
 
 constexpr uint8_t BL_PWM_CHANNEL = 6;          // Channel 6 (Timer 3) avoids collision with tone() on Channel 0
 constexpr uint8_t BL_BRIGHT_DAY = 0;           // Active-LOW: 0 = 100% full brightness
-constexpr uint8_t BL_BRIGHT_NIGHT = 215;       // Active-LOW: 215 = ~16% dim mode
+constexpr uint8_t BL_BRIGHT_NIGHT = 170;       // Active-LOW: 195 = ~24% dim mode, ~25 less per 10% more brightness
 constexpr unsigned long BL_BOOST_MS = 15000UL; // Hold full brightness for 15s after touch
 constexpr unsigned long BL_FADE_MS = 30000UL;  // Fade gradually over 30 seconds
 
