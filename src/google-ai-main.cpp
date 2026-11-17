@@ -983,8 +983,10 @@ void fillSpriteWithMaldivesSlice(TFT_eSprite &spr, int16_t screenY, int16_t slic
 void drawWhere(bool isArrived = false)
 {
   const int16_t bannerH = 42;
+  const uint8_t textAlpha = 190;   // 0 = invisible, 255 = solid (180-210 gives a nice frosted translucent look)
+  const uint8_t shadowAlpha = 110; // Subtle translucent drop shadow
 
-  // 1. Create a 16-bit sprite and decode the exact Maldives photo slice into it first
+  // 1. Decode the exact Maldives photo slice into the background sprite
   TFT_eSprite bg(&tft);
   bg.setColorDepth(16);
   bg.createSprite(SCREEN_W, bannerH);
@@ -996,29 +998,57 @@ void drawWhere(bool isArrived = false)
   TJpgDec.drawJpg(0, BG_IMAGE_Y - WHERE_Y, maldives__esp32__jpg, sizeof(maldives__esp32__jpg));
   gWhereBgSpritePtr = nullptr;
 
+  // 2. Render the destination text onto a separate 16-bit sprite using TFT_BLACK as transparent key
+  TFT_eSprite txt(&tft);
+  txt.setColorDepth(16);
+  txt.createSprite(SCREEN_W, bannerH);
+  txt.fillSprite(TFT_BLACK);
+
   String displayText = isArrived ? (String(gWhere) + "!") : String(gWhere);
-  bg.setTextDatum(MC_DATUM);
+  txt.setTextDatum(MC_DATUM);
+
+  uint16_t mainCol = isArrived ? TFT_GOLD : TFT_WHITE;
+  uint16_t shadowCol = TFT_NAVY;
 
 #ifdef SMOOTH_FONT
-  // Load anti-aliased smooth font; TFT_eSPI automatically blends edges against existing sprite pixels
-  bg.loadFont(NotoSansBold36);
+  txt.loadFont(NotoSansBold36);
 
-  // Draw anti-aliased drop shadow, then anti-aliased foreground text
-  bg.setTextColor(TFT_NAVY, TFT_BLACK, false);
-  bg.drawString(displayText, (SCREEN_W / 2) + 2, 22);
+  // Draw shadow first, then main text
+  txt.setTextColor(shadowCol, TFT_BLACK, false);
+  txt.drawString(displayText, (SCREEN_W / 2) + 2, 22);
 
-  bg.setTextColor(isArrived ? TFT_GOLD : TFT_WHITE, TFT_BLACK, false);
-  bg.drawString(displayText, SCREEN_W / 2, 20);
+  txt.setTextColor(mainCol, TFT_BLACK, false);
+  txt.drawString(displayText, SCREEN_W / 2, 20);
 
-  bg.unloadFont();
+  txt.unloadFont();
 #else
-  bg.setFreeFont(isArrived ? &FreeSansBold12pt7b : &FreeSansBold18pt7b);
-  bg.setTextColor(TFT_NAVY);
-  bg.drawString(displayText, (SCREEN_W / 2) + 2, 22);
-  bg.setTextColor(isArrived ? TFT_GOLD : TFT_WHITE);
-  bg.drawString(displayText, SCREEN_W / 2, 20);
+  txt.setFreeFont(isArrived ? &FreeSansBold12pt7b : &FreeSansBold18pt7b);
+  txt.setTextColor(shadowCol);
+  txt.drawString(displayText, (SCREEN_W / 2) + 2, 22);
+  txt.setTextColor(mainCol);
+  txt.drawString(displayText, SCREEN_W / 2, 20);
 #endif
 
+  // 3. Alpha-blend non-black text/shadow pixels over the Maldives photo pixels
+  for (int16_t y = 0; y < bannerH; y++)
+  {
+    for (int16_t x = 0; x < SCREEN_W; x++)
+    {
+      uint16_t fgPix = txt.readPixel(x, y);
+      if (fgPix != TFT_BLACK)
+      {
+        uint16_t bgPix = bg.readPixel(x, y);
+        // Apply lighter alpha to pure shadow pixels and stronger alpha to main text & anti-aliased edges
+        uint8_t alpha = (fgPix == shadowCol) ? shadowAlpha : textAlpha;
+        uint16_t blended = tft.alphaBlend(alpha, fgPix, bgPix);
+        bg.drawPixel(x, y, blended);
+      }
+    }
+  }
+
+  txt.deleteSprite();
+
+  // 4. Push the blended result to the screen
   bg.pushSprite(0, WHERE_Y);
   bg.deleteSprite();
 }
