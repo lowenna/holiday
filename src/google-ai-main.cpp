@@ -1042,72 +1042,162 @@ void drawToggleTile(int16_t tileX, int16_t tileY, int16_t tileW, const char *lab
   tft.fillCircle(knobX, knobY, knobR, TFT_WHITE);
 }
 
+void showWebUpdateInfoScreen(bool mdnsOk)
+{
+  tft.fillScreen(TFT_BLACK);
+
+  // Matching Header Banner
+  tft.fillRect(0, 0, SCREEN_W, 24, TFT_NAVY);
+  tft.drawFastHLine(0, 24, SCREEN_W, TFT_CYAN);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_WHITE, TFT_NAVY);
+  tft.drawString("Web UI & OTA Update", SCREEN_W / 2, 12, 2);
+
+  // Instruction & URL Card
+  tft.drawRoundRect(10, 34, SCREEN_W - 20, 134, 8, TFT_DARKCYAN);
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextFont(2);
+  tft.setTextSize(1);
+
+  tft.setTextColor(TFT_CYAN, TFT_BLACK);
+  tft.setCursor(18, 42);
+  tft.print("Browse from phone or PC to");
+  tft.setCursor(18, 60);
+  tft.print("change settings or flash .bin:");
+
+  int urlY = 90;
+  if (mdnsOk)
+  {
+    tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    tft.setCursor(22, urlY);
+    tft.printf("http://%s.local", otaHostname);
+    urlY += 24;
+  }
+
+  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+  tft.setCursor(22, urlY);
+  tft.printf("http://%s", WiFi.localIP().toString().c_str());
+
+  // Full-width Back Button (y = 180..212)
+  const int16_t backX = 12;
+  const int16_t backY = 180;
+  const int16_t backW = SCREEN_W - 24;
+  const int16_t backH = 32;
+  tft.drawRoundRect(backX, backY, backW, backH, 6, TFT_CYAN);
+  tft.fillRoundRect(backX + 2, backY + 2, backW - 4, backH - 4, 5, TFT_NAVY);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_WHITE, TFT_NAVY);
+  tft.drawString("< Back", SCREEN_W / 2, backY + (backH / 2), 2);
+  tft.setTextDatum(TL_DATUM);
+
+  // Wait for user to tap Back
+  bool wasTouching = true;
+  uint16_t tx, ty;
+  while (true)
+  {
+    otaServer.handleClient();
+    bool touching = getTouchPixel(tx, ty);
+    if (touching && !wasTouching)
+    {
+      if (tx >= backX && tx <= (backX + backW) && ty >= backY && ty <= (backY + backH))
+      {
+        tone(AZTOUCH_BEEPER, 784, 50);
+        break;
+      }
+    }
+    wasTouching = touching;
+    delay(25);
+  }
+}
+
+void drawConfigScreenBase(int16_t col1X, int16_t col2X, int16_t tileW,
+                          int16_t row1Y, int16_t row2Y, int16_t row3Y,
+                          int16_t setupX, int16_t updateX, int16_t startX,
+                          int16_t btnY, int16_t btnW, int16_t btnH)
+{
+  tft.fillScreen(TFT_BLACK);
+
+  // 1. Matching Top Header Banner (y = 0..24)
+  tft.fillRect(0, 0, SCREEN_W, 24, TFT_NAVY);
+  tft.drawFastHLine(0, 24, SCREEN_W, TFT_CYAN);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_WHITE, TFT_NAVY);
+  tft.drawString("Settings & Options", SCREEN_W / 2, 12, 2);
+  tft.setTextDatum(TL_DATUM);
+
+  // 2. Toggle Tiles (y = 32..166)
+  drawToggleTile(col1X, row1Y, tileW, "Screensaver", gScreensaverEnabled);
+  drawToggleTile(col2X, row1Y, tileW, "Dimmer", gDimmerEnabled);
+
+  drawToggleTile(col1X, row2Y, tileW, "Weather", gWeatherEnabled);
+  drawToggleTile(col2X, row2Y, tileW, "Island +1h", gIslandPlusOne);
+
+  drawToggleTile(col1X, row3Y, tileW, "Birthday", gBirthdayEnabled);
+
+  // 3. Bottom Action Buttons: Setup | Update | Start (10s...)
+  tft.drawRoundRect(setupX, btnY, btnW, btnH, 6, TFT_CYAN);
+  tft.fillRoundRect(setupX + 2, btnY + 2, btnW - 4, btnH - 4, 5, TFT_NAVY);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_WHITE, TFT_NAVY);
+  tft.drawString("Setup", setupX + (btnW / 2), btnY + (btnH / 2), 2);
+
+  tft.drawRoundRect(updateX, btnY, btnW, btnH, 6, TFT_CYAN);
+  tft.fillRoundRect(updateX + 2, btnY + 2, btnW - 4, btnH - 4, 5, TFT_NAVY);
+  tft.setTextColor(TFT_WHITE, TFT_NAVY);
+  tft.drawString("Update", updateX + (btnW / 2), btnY + (btnH / 2), 2);
+
+  tft.drawRoundRect(startX, btnY, btnW, btnH, 6, TFT_GREEN);
+  tft.fillRoundRect(startX + 2, btnY + 2, btnW - 4, btnH - 4, 5, TFT_DARKGREEN);
+  tft.setTextDatum(TL_DATUM);
+
+  // 4. Footer Copyright
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+  tft.drawString("(C) John Howard 2026", SCREEN_W / 2, 226, 2);
+  tft.setTextDatum(TL_DATUM);
+}
+
 bool areWeConfiguring(bool mdnsOk)
 {
   unsigned long startAt = millis();
   bool triggered = false;
+  bool exitNow = false;
   int lastSecsLeft = -1;
-  bool wasTouching = true; // Ignore held finger from long-press until lifted
+  bool wasTouching = true; // Ignore held finger until lifted
 
-  tft.fillScreen(TFT_BLACK);
-  tft.setTextFont(2);
-  tft.setTextSize(1);
-  tft.setCursor(4, 2);
-  tft.setTextColor(TFT_CYAN, TFT_BLACK);
-  tft.println("Web UI / OTA:");
-  tft.setTextColor(TFT_GREEN, TFT_BLACK);
-  if (mdnsOk)
-    tft.println("  http://" + String(otaHostname) + ".local");
-  tft.println("  http://" + WiFi.localIP().toString());
-
-  // Compact centred Wi-Fi / Holiday Config Button (y = 56..80)
-  const int16_t cfgW = 180;
-  const int16_t cfgH = 24;
-  const int16_t cfgX = (SCREEN_W - cfgW) / 2;
-  const int16_t cfgY = 56;
-  tft.drawRoundRect(cfgX, cfgY, cfgW, cfgH, 6, TFT_CYAN);
-  tft.fillRoundRect(cfgX + 2, cfgY + 2, cfgW - 4, cfgH - 4, 5, TFT_NAVY);
-  tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(TFT_WHITE, TFT_NAVY);
-  tft.drawString("Tap to configure", SCREEN_W / 2, cfgY + (cfgH / 2), 2);
-  tft.setTextDatum(TL_DATUM);
-
-  // 3x2 Grid Coordinates (y = 86..212)
+  // Toggle grid layout (y = 32..166)
   const int16_t col1X = 12;
   const int16_t col2X = 166;
   const int16_t tileW = 142;
-  const int16_t row1Y = 86;
-  const int16_t row2Y = 129;
-  const int16_t row3Y = 172;
+  const int16_t row1Y = 32;
+  const int16_t row2Y = 76;
+  const int16_t row3Y = 120;
   const int16_t tileH = 38;
 
-  // Row 1
-  drawToggleTile(col1X, row1Y, tileW, "Screensaver", gScreensaverEnabled);
-  drawToggleTile(col2X, row1Y, tileW, "Dimmer", gDimmerEnabled);
+  // 3-Button Row layout (y = 172..204)
+  const int16_t btnY = 172;
+  const int16_t btnH = 32;
+  const int16_t btnW = 94;
+  const int16_t setupX = 12;
+  const int16_t updateX = 113;
+  const int16_t startX = 214;
 
-  // Row 2
-  drawToggleTile(col1X, row2Y, tileW, "Weather", gWeatherEnabled);
-  drawToggleTile(col2X, row2Y, tileW, "Island +1h", gIslandPlusOne);
-
-  // Row 3
-  drawToggleTile(col1X, row3Y, tileW, "Birthday", gBirthdayEnabled);
-
-  // Bottom line: Copyright left-aligned, Countdown right-aligned
-  tft.setTextDatum(TL_DATUM);
-  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-  tft.drawString("(C) John Howard 2026", 4, 224, 2);
+  drawConfigScreenBase(col1X, col2X, tileW, row1Y, row2Y, row3Y,
+                       setupX, updateX, startX, btnY, btnW, btnH);
 
   uint16_t tx, ty;
-  while ((millis() - startAt < 10000) && !triggered)
+  while ((millis() - startAt < 10000) && !triggered && !exitNow)
   {
+    otaServer.handleClient();
+
     int secsLeft = max(1, 10 - (int)((millis() - startAt) / 1000));
     if (secsLeft != lastSecsLeft)
     {
       lastSecsLeft = secsLeft;
-      tft.fillRect(175, 222, 145, 18, TFT_BLACK);
-      tft.setTextDatum(TR_DATUM);
-      tft.setTextColor(TFT_CYAN, TFT_BLACK);
-      tft.drawString("Starting in " + String(secsLeft) + "s...", SCREEN_W - 4, 224, 2);
+      tft.fillRoundRect(startX + 2, btnY + 2, btnW - 4, btnH - 4, 5, TFT_DARKGREEN);
+      tft.setTextDatum(MC_DATUM);
+      tft.setTextColor(TFT_WHITE, TFT_DARKGREEN);
+      tft.drawString("Start (" + String(secsLeft) + "s)", startX + (btnW / 2), btnY + (btnH / 2), 2);
       tft.setTextDatum(TL_DATUM);
     }
 
@@ -1184,10 +1274,28 @@ bool areWeConfiguring(bool mdnsOk)
         startAt = millis();
         lastSecsLeft = -1;
       }
-      // Main Config Button ("Tap to configure")
-      else if (tx >= cfgX && tx <= (cfgX + cfgW) && ty >= cfgY && ty <= (cfgY + cfgH))
+      // Button 1: Setup
+      else if (tx >= setupX && tx <= (setupX + btnW) && ty >= btnY && ty <= (btnY + btnH))
       {
+        tone(AZTOUCH_BEEPER, 880, 60);
         triggered = true;
+      }
+      // Button 2: Update (opens Web UI & OTA URLs sub-page)
+      else if (tx >= updateX && tx <= (updateX + btnW) && ty >= btnY && ty <= (btnY + btnH))
+      {
+        tone(AZTOUCH_BEEPER, 880, 60);
+        showWebUpdateInfoScreen(mdnsOk);
+        drawConfigScreenBase(col1X, col2X, tileW, row1Y, row2Y, row3Y,
+                             setupX, updateX, startX, btnY, btnW, btnH);
+        startAt = millis();
+        lastSecsLeft = -1;
+        wasTouching = true;
+      }
+      // Button 3: Start (10s...) — starts immediately when tapped
+      else if (tx >= startX && tx <= (startX + btnW) && ty >= btnY && ty <= (btnY + btnH))
+      {
+        tone(AZTOUCH_BEEPER, 1047, 60);
+        exitNow = true;
       }
     }
     wasTouching = touching;
