@@ -16,6 +16,18 @@
 #include "maldives.h" // Hexdump of 320x240 JPG background
 #include "NotoSansBold36.h"
 
+/*
+ AI Prompt
+ You've been helping me with this project. I'm not including all files, but the two main
+ ones for now can be at
+
+ https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/src/google-ai-main.cpp and
+ https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/src/weather.cpp
+
+ Can you confirm you can see these files. If so, please confirm what they do so I can be sure
+ you can help me update it.
+ */
+
 char otaHostname[24];
 WebServer otaServer(80);
 bool otaInProgress = false;
