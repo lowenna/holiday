@@ -16,7 +16,7 @@ int16_t WHERE_H = 26;
 
 static constexpr int16_t WX_SCREEN_W = 320;
 static constexpr int16_t HOURLY_Y = 91;
-static constexpr int16_t HOURLY_H = 59; // 51px unified card + 8px bottom strip for page dots
+static constexpr int16_t HOURLY_H = 61; // 51px unified card + 10px bottom strip for page dots
 
 String weatherTempStr = "";
 String weatherCondStr = "";
@@ -38,11 +38,11 @@ struct ForecastSlot
     bool valid;
 };
 
-std::array<ForecastSlot, 8> hourlyForecast;
+std::array<ForecastSlot, 24> hourlyForecast;
 std::array<ForecastSlot, 16> dailyForecast;
-bool hasHourlyForecast = false;
+int hourlyForecastCount = 0;
 int dailyForecastCount = 0;
-int forecastViewMode = 0; // 0 = 8 Hours, 1 = Days 1-8, 2 = Days 9-16
+int forecastViewMode = 0; // 0 = Hrs 1-8, 1 = Hrs 9-16, 2 = Hrs 17-24, 3 = Days 1-8, 4 = Days 9-16
 
 String wmoCodeToText(int code, bool isDay)
 {
@@ -245,11 +245,15 @@ void drawHourlyForecastBar()
     if (!gWeatherEnabled)
         return;
 
-    bool isDaily = (forecastViewMode == 1 || forecastViewMode == 2) && (dailyForecastCount > 0);
-    if (!isDaily && !hasHourlyForecast)
+    bool isDaily = (forecastViewMode == 3 || forecastViewMode == 4) && (dailyForecastCount > 0);
+    if (!isDaily && hourlyForecastCount == 0)
         return;
 
-    int startIndex = (forecastViewMode == 2) ? 8 : 0;
+    int startIndex = 0;
+    if (forecastViewMode == 1 || forecastViewMode == 4)
+        startIndex = 8;
+    else if (forecastViewMode == 2)
+        startIndex = 16;
 
     TFT_eSprite hSpr(&tft);
     hSpr.setColorDepth(16);
@@ -262,18 +266,31 @@ void drawHourlyForecastBar()
     const int startX = 8;
     const int boxH = 51;
 
-    // Color-code each page: Cyan = 8h, Gold = Days 1-8, Green = Days 9-16
+    // Color-code each page:
+    // 0: Cyan (Hrs 1-8), 1: Sky Blue (Hrs 9-16), 2: Magenta (Hrs 17-24), 3: Gold (Days 1-8), 4: Green (Days 9-16)
     uint16_t borderCol = TFT_DARKCYAN;
     uint16_t labelCol = TFT_CYAN;
     uint16_t activeDotCol = TFT_CYAN;
 
     if (forecastViewMode == 1)
     {
+        borderCol = TFT_BLUE;
+        labelCol = TFT_SKYBLUE;
+        activeDotCol = TFT_SKYBLUE;
+    }
+    else if (forecastViewMode == 2)
+    {
+        borderCol = TFT_PURPLE;
+        labelCol = TFT_MAGENTA;
+        activeDotCol = TFT_MAGENTA;
+    }
+    else if (forecastViewMode == 3)
+    {
         borderCol = TFT_GOLD;
         labelCol = TFT_YELLOW;
         activeDotCol = TFT_GOLD;
     }
-    else if (forecastViewMode == 2)
+    else if (forecastViewMode == 4)
     {
         borderCol = TFT_DARKGREEN;
         labelCol = TFT_GREEN;
@@ -286,10 +303,13 @@ void drawHourlyForecastBar()
 
     for (int i = 0; i < 8; i++)
     {
-        if (isDaily && (startIndex + i >= 16))
+        int idx = startIndex + i;
+        if (isDaily && idx >= 16)
+            continue;
+        if (!isDaily && idx >= 24)
             continue;
 
-        const ForecastSlot &slot = isDaily ? dailyForecast.at(startIndex + i) : hourlyForecast.at(i);
+        const ForecastSlot &slot = isDaily ? dailyForecast.at(idx) : hourlyForecast.at(idx);
         if (!slot.valid)
             continue;
 
@@ -327,24 +347,28 @@ void drawHourlyForecastBar()
         }
     }
 
-    // 5. Page indicator dots centred below the boxes (y = 55)
-    int totalPages = (dailyForecastCount > 8) ? 3 : ((dailyForecastCount > 0) ? 2 : 1);
+    // 5. Page indicator dots centred below the boxes (radius = 3px for clear visibility)
+    int hourlyPages = (hourlyForecastCount > 16) ? 3 : ((hourlyForecastCount > 8) ? 2 : ((hourlyForecastCount > 0) ? 1 : 0));
+    int dailyPages = (dailyForecastCount > 8) ? 2 : ((dailyForecastCount > 0) ? 1 : 0);
+    int totalPages = hourlyPages + dailyPages;
+
     if (totalPages > 1)
     {
-        const int dotSpacing = 10;
+        const int dotSpacing = 12;
         int startDotX = (WX_SCREEN_W / 2) - (((totalPages - 1) * dotSpacing) / 2);
-        int dotY = boxH + 4;
+        int dotY = boxH + 5;
 
         for (int p = 0; p < totalPages; p++)
         {
             int dx = startDotX + (p * dotSpacing);
             if (p == forecastViewMode)
             {
-                hSpr.fillCircle(dx, dotY, 2, activeDotCol);
+                hSpr.fillCircle(dx, dotY, 3, activeDotCol);
             }
             else
             {
-                hSpr.drawCircle(dx, dotY, 2, TFT_LIGHTGREY);
+                hSpr.fillCircle(dx, dotY, 3, TFT_NAVY);
+                hSpr.drawCircle(dx, dotY, 3, TFT_LIGHTGREY);
             }
         }
     }
@@ -355,22 +379,29 @@ void drawHourlyForecastBar()
 
 bool handleWeatherForecastTouch(uint16_t tx, uint16_t ty)
 {
-    if (!gWeatherEnabled || (!hasHourlyForecast && dailyForecastCount == 0))
+    if (!gWeatherEnabled || (hourlyForecastCount == 0 && dailyForecastCount == 0))
         return false;
 
     if (tx >= 8 && tx <= 312 && ty >= HOURLY_Y && ty <= (HOURLY_Y + HOURLY_H))
     {
-        if (dailyForecastCount > 0 && hasHourlyForecast)
+        for (int step = 0; step < 5; step++)
         {
-            // Cycle: 0 (8h) -> 1 (Days 1-8) -> 2 (Days 9-16, if available) -> 0
-            forecastViewMode = (forecastViewMode + 1) % 3;
-            if (forecastViewMode == 2 && dailyForecastCount <= 8)
-            {
-                forecastViewMode = 0;
-            }
-            drawHourlyForecastBar();
-            return true;
+            forecastViewMode = (forecastViewMode + 1) % 5;
+
+            if (forecastViewMode == 0 && hourlyForecastCount > 0)
+                break;
+            if (forecastViewMode == 1 && hourlyForecastCount > 8)
+                break;
+            if (forecastViewMode == 2 && hourlyForecastCount > 16)
+                break;
+            if (forecastViewMode == 3 && dailyForecastCount > 0)
+                break;
+            if (forecastViewMode == 4 && dailyForecastCount > 8)
+                break;
         }
+
+        drawHourlyForecastBar();
+        return true;
     }
     return false;
 }
@@ -443,7 +474,7 @@ void fetchDestinationWeather()
     String wxUrl = String("http://") + "api." + "open-meteo.com" +
                    "/v1/forecast?latitude=" + String(cachedLat, 4) +
                    "&longitude=" + String(cachedLon, 4) +
-                   "&current_weather=true&hourly=temperature_2m,weathercode,is_day&forecast_hours=9" +
+                   "&current_weather=true&hourly=temperature_2m,weathercode,is_day&forecast_hours=25" +
                    "&daily=weathercode,temperature_2m_max,precipitation_sum&forecast_days=16&timezone=auto";
     Serial.printf("[WX] Forecast URL: %s\n", wxUrl.c_str());
 
@@ -482,26 +513,27 @@ void fetchDestinationWeather()
                 hasCurrent = true;
             }
 
-            // 2. Parse next 8 hours (shifted +1h when Island +1h is enabled)
+            // 2. Parse next 24 hours (3 pages of 8 hours, shifted +1h when Island +1h is enabled)
             String hrKey = String(char(34)) + "hourly" + String(char(34)) + ":{";
             int hrIdx = wxPayload.indexOf(hrKey);
             if (hrIdx >= 0)
             {
                 String hrSection = wxPayload.substring(hrIdx);
-                std::array<int, 9> hours = {};
-                std::array<float, 9> temps = {};
-                std::array<float, 9> codes = {};
-                std::array<float, 9> days = {};
+                std::array<int, 25> hours = {};
+                std::array<float, 25> temps = {};
+                std::array<float, 25> codes = {};
+                std::array<float, 25> days = {};
 
-                int nH = extractJsonHourArray(hrSection, "time", hours.data(), 9);
-                int nT = extractJsonNumberArray(hrSection, "temperature_2m", temps.data(), 9);
-                int nC = extractJsonNumberArray(hrSection, "weathercode", codes.data(), 9);
-                int nD = extractJsonNumberArray(hrSection, "is_day", days.data(), 9);
+                int nH = extractJsonHourArray(hrSection, "time", hours.data(), 25);
+                int nT = extractJsonNumberArray(hrSection, "temperature_2m", temps.data(), 25);
+                int nC = extractJsonNumberArray(hrSection, "weathercode", codes.data(), 25);
+                int nD = extractJsonNumberArray(hrSection, "is_day", days.data(), 25);
 
                 int available = min(min(nH, nT), min(nC, nD));
-                int startOffset = (available >= 9) ? 1 : 0;
+                int startOffset = (available >= 25) ? 1 : 0;
+                hourlyForecastCount = 0;
 
-                for (int i = 0; i < 8; i++)
+                for (int i = 0; i < 24; i++)
                 {
                     int src = i + startOffset;
                     if (src < available)
@@ -513,7 +545,7 @@ void fetchDestinationWeather()
                         hourlyForecast.at(i).isDay = ((int)roundf(days.at(src)) == 1);
                         hourlyForecast.at(i).precipMm = 0.0f;
                         hourlyForecast.at(i).valid = true;
-                        hasHourlyForecast = true;
+                        hourlyForecastCount++;
                     }
                     else
                     {
