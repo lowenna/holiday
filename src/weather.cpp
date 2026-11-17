@@ -287,19 +287,26 @@ void drawHourlyForecastBar()
     else if (forecastViewMode == 2)
         startIndex = 16;
 
+    // Opacity levels (0 = invisible, 255 = solid)
+    const uint8_t cardBgAlpha = 135; // ~53% frosted-glass tint for card interiors
+    const uint8_t detailAlpha = 225; // ~88% crisp visibility for borders, icons & text
+
+    // 1. Decode exact Maldives photo slice into the background sprite
     TFT_eSprite hSpr(&tft);
     hSpr.setColorDepth(16);
     hSpr.createSprite(WX_SCREEN_W, HOURLY_H);
-
-    // Paint exact Maldives photo slice behind the sprite so box corners & dots blend seamlessly
     fillSpriteWithMaldivesSlice(hSpr, HOURLY_Y, HOURLY_H);
+
+    // 2. Draw the weather cards, icons & text onto a foreground sprite (TFT_BLACK = transparent)
+    TFT_eSprite fgSpr(&tft);
+    fgSpr.setColorDepth(16);
+    fgSpr.createSprite(WX_SCREEN_W, HOURLY_H);
+    fgSpr.fillSprite(TFT_BLACK);
 
     const int slotW = 38;
     const int startX = 8;
     const int boxH = 51;
 
-    // Color-code each page:
-    // 0: Cyan (Hrs 1-8), 1: Sky Blue (Hrs 9-16), 2: Magenta (Hrs 17-24), 3: Gold (Days 1-8), 4: Green (Days 9-16)
     uint16_t borderCol = TFT_DARKCYAN;
     uint16_t labelCol = TFT_CYAN;
     uint16_t activeDotCol = TFT_CYAN;
@@ -329,9 +336,9 @@ void drawHourlyForecastBar()
         activeDotCol = TFT_GREEN;
     }
 
-    hSpr.setTextDatum(TC_DATUM);
-    hSpr.setTextFont(1);
-    hSpr.setTextSize(1);
+    fgSpr.setTextDatum(TC_DATUM);
+    fgSpr.setTextFont(1);
+    fgSpr.setTextSize(1);
 
     for (int i = 0; i < 8; i++)
     {
@@ -349,37 +356,37 @@ void drawHourlyForecastBar()
         int cx = sx + (slotW / 2);
 
         // Individual rounded box for each hour/day
-        hSpr.fillRoundRect(sx + 1, 0, slotW - 2, boxH, 5, TFT_NAVY);
-        hSpr.drawRoundRect(sx + 1, 0, slotW - 2, boxH, 5, borderCol);
+        fgSpr.fillRoundRect(sx + 1, 0, slotW - 2, boxH, 5, TFT_NAVY);
+        fgSpr.drawRoundRect(sx + 1, 0, slotW - 2, boxH, 5, borderCol);
 
         // 1. Header label ("18h" or "Mon")
-        hSpr.setTextColor(labelCol, TFT_NAVY);
-        hSpr.drawString(slot.label, cx, 2, 1);
+        fgSpr.setTextColor(labelCol, TFT_NAVY);
+        fgSpr.drawString(slot.label, cx, 2, 1);
 
         // 2. Weather icon
-        drawMiniWeatherIcon(hSpr, cx, 17, slot.wmoCode, slot.isDay);
+        drawMiniWeatherIcon(fgSpr, cx, 17, slot.wmoCode, slot.isDay);
 
         // 3. Temperature + tiny degree dot ("27°")
         String tStr = String(slot.tempC);
-        int tw = hSpr.textWidth(tStr, 1);
+        int tw = fgSpr.textWidth(tStr, 1);
         int tx = cx - ((tw + 3) / 2);
-        hSpr.setTextDatum(TL_DATUM);
-        hSpr.setTextColor(TFT_WHITE, TFT_NAVY);
-        hSpr.drawString(tStr, tx, 28, 1);
-        hSpr.drawCircle(tx + tw + 1, 29, 1, TFT_WHITE);
-        hSpr.setTextDatum(TC_DATUM);
+        fgSpr.setTextDatum(TL_DATUM);
+        fgSpr.setTextColor(TFT_WHITE, TFT_NAVY);
+        fgSpr.drawString(tStr, tx, 28, 1);
+        fgSpr.drawCircle(tx + tw + 1, 29, 1, TFT_WHITE);
+        fgSpr.setTextDatum(TC_DATUM);
 
         // 4. Optional rainfall ("5mm") on rainy days in daily views
         if (isDaily && slot.precipMm > 0.1f)
         {
             int roundedMm = (int)roundf(slot.precipMm);
             String pStr = (roundedMm >= 1) ? (String(roundedMm) + "mm") : "<1mm";
-            hSpr.setTextColor(TFT_CYAN, TFT_NAVY);
-            hSpr.drawString(pStr, cx, 39, 1);
+            fgSpr.setTextColor(TFT_CYAN, TFT_NAVY);
+            fgSpr.drawString(pStr, cx, 39, 1);
         }
     }
 
-    // 5. Page indicator dots centred below the boxes (radius = 3px for clear visibility)
+    // 5. Page indicator dots centred below the boxes
     int hourlyPages = (hourlyForecastCount > 16) ? 3 : ((hourlyForecastCount > 8) ? 2 : ((hourlyForecastCount > 0) ? 1 : 0));
     int dailyPages = (dailyForecastCount > 8) ? 2 : ((dailyForecastCount > 0) ? 1 : 0);
     int totalPages = hourlyPages + dailyPages;
@@ -395,15 +402,33 @@ void drawHourlyForecastBar()
             int dx = startDotX + (p * dotSpacing);
             if (p == forecastViewMode)
             {
-                hSpr.fillCircle(dx, dotY, 3, activeDotCol);
+                fgSpr.fillCircle(dx, dotY, 3, activeDotCol);
             }
             else
             {
-                hSpr.fillCircle(dx, dotY, 3, TFT_NAVY);
-                hSpr.drawCircle(dx, dotY, 3, TFT_LIGHTGREY);
+                fgSpr.fillCircle(dx, dotY, 3, TFT_NAVY);
+                fgSpr.drawCircle(dx, dotY, 3, TFT_LIGHTGREY);
             }
         }
     }
+
+    // 3. Blend foreground cards & icons over the Maldives background slice
+    for (int16_t y = 0; y < HOURLY_H; y++)
+    {
+        for (int16_t x = 0; x < WX_SCREEN_W; x++)
+        {
+            uint16_t fgPix = fgSpr.readPixel(x, y);
+            if (fgPix != TFT_BLACK)
+            {
+                uint16_t bgPix = hSpr.readPixel(x, y);
+                // Card backgrounds (TFT_NAVY) blend softly; borders, icons & text stay sharp
+                uint8_t alpha = (fgPix == TFT_NAVY) ? cardBgAlpha : detailAlpha;
+                hSpr.drawPixel(x, y, tft.alphaBlend(alpha, fgPix, bgPix));
+            }
+        }
+    }
+
+    fgSpr.deleteSprite();
 
     hSpr.pushSprite(0, HOURLY_Y);
     hSpr.deleteSprite();

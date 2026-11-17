@@ -1058,15 +1058,10 @@ bool inDimClockMode = false;
 
 void drawCountdownLeft(int days, int hours, int mins, int secs, bool showColon, bool isArrived, time_t rawlocal)
 {
-  if (inDimClockMode)
-  {
-    countdownFgSprite.fillSprite(TFT_BLACK);
-  }
-  else
-  {
-    countdownBgSprite.pushToSprite(&countdownFgSprite, 0, 0);
-  }
+  const uint8_t digitAlpha = 195; // 0 = invisible, 255 = solid (180-210 blends nicely with the water)
 
+  // Always draw the 7-segment digits onto a clean black canvas first
+  countdownFgSprite.fillSprite(TFT_BLACK);
   countdownFgSprite.setTextSize(1);
   countdownFgSprite.setTextFont(7);
   countdownFgSprite.setTextColor(TFT_DARKCYAN);
@@ -1115,6 +1110,27 @@ void drawCountdownLeft(int days, int hours, int mins, int secs, bool showColon, 
       countdownFgSprite.printf("%02d%c", mins, sep);
       countdownFgSprite.setCursor(245, 0);
       countdownFgSprite.printf("%02d", secs);
+    }
+  }
+
+  // In normal mode, alpha-blend the digits over the pre-decoded Maldives water slice
+  if (!inDimClockMode)
+  {
+    for (int16_t y = 0; y < COUNTDOWN_H; y++)
+    {
+      for (int16_t x = 0; x < SCREEN_W; x++)
+      {
+        uint16_t bgPix = countdownBgSprite.readPixel(x, y);
+        uint16_t fgPix = countdownFgSprite.readPixel(x, y);
+        if (fgPix != TFT_BLACK)
+        {
+          countdownFgSprite.drawPixel(x, y, tft.alphaBlend(digitAlpha, fgPix, bgPix));
+        }
+        else
+        {
+          countdownFgSprite.drawPixel(x, y, bgPix);
+        }
+      }
     }
   }
 
