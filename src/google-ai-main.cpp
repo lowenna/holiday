@@ -18,14 +18,26 @@
 
 /*
  AI Prompt
- You've been helping me with this project. I'm not including all files, but the two main
+ You've been helping me with this project. I'm not including all files, but the main
  ones for now can be at
 
  https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/src/google-ai-main.cpp and
  https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/src/weather.cpp
+ https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/src/audio.cpp
+ https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/src/eyes.cpp
+ https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/include/maldives.h
+ https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/platformio.ini
+ 
+ 
+ https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/user_setup.h
 
  Can you confirm you can see these files. If so, please confirm what they do so I can be sure
- you can help me update it.
+ you can help me update it. 
+ 
+ The target device is an ESP32 AZ-Delivery DevKit V4 with a 2.8" AZ-Touch MOD display. 
+ 
+ The project is a holiday countdown timer with OTA firmware update, weather info, 
+ and birthday celebration features.
  */
 
 char otaHostname[24];
