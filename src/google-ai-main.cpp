@@ -126,7 +126,7 @@ bool gWeatherEnabled = true;
 bool gDimmerEnabled = true;
 bool gIslandPlusOne = false;
 bool gBirthdayEnabled = false;
-bool gRainAsPercent = true;
+bool gRainAsPercent = false;
 int gBdayMonth = 1;
 int gBdayDay = 1;
 int gLastCelebratedBdayYear = -1;
@@ -1520,7 +1520,7 @@ void readPreferences()
   gWeatherEnabled = prefs.getBool("wxen", true);
   gDimmerEnabled = prefs.getBool("dim", true);
   gIslandPlusOne = prefs.getBool("isl1h", false);
-  gRainAsPercent = prefs.getBool("rainpct", true);
+  gRainAsPercent = prefs.getBool("rainpct", false);
   gBirthdayEnabled = prefs.getBool("bdayen", false);
   gBdayMonth = prefs.getInt("bdaym", 1);
   gBdayDay = prefs.getInt("bdayd", 1);
