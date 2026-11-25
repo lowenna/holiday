@@ -175,7 +175,6 @@ void showScreenError(const char *title, const char *detail, bool fullScreen = tr
     delay(pauseMs);
   }
 }
-
 // Forward declarations for functions defined later in this file
 bool isValidDateTime(int hour, int mins, int day, int month, int year);
 void writePreferences(String hour, String mins, String day, String month, String year, String where);
@@ -183,17 +182,24 @@ void displaySSIDAndWhen();
 void drawStaticBackgroundImage();
 void displayLines();
 void drawWhere(bool isArrived);
+void drawOtaProgressScreen(const char *statusText, int percent);
 
 void handleOTAUpload()
 {
+  static size_t otaExpectedSize = 0;
+  static int lastOtaPct = -1;
+
   HTTPUpload &upload = otaServer.upload();
   if (upload.status == UPLOAD_FILE_START)
   {
     Serial.printf("OTA Update Start: %s\n", upload.filename.c_str());
-    otaInProgress = true;
-    tft.fillScreen(TFT_BLACK);
-    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-    tft.drawCentreString("Updating, please wait...", 160, 100, 4);
+    otaInProgress = false; // Ensure drawOtaProgressScreen initializes the header & card
+    lastOtaPct = -1;
+    otaExpectedSize = otaServer.hasHeader("Content-Length")
+                          ? (size_t)otaServer.header("Content-Length").toInt()
+                          : 0;
+
+    drawOtaProgressScreen("Uploading firmware...", 0);
     if (!Update.begin(UPDATE_SIZE_UNKNOWN))
     {
       Update.printError(Serial);
@@ -205,12 +211,22 @@ void handleOTAUpload()
     {
       Update.printError(Serial);
     }
+    else if (otaExpectedSize > 0)
+    {
+      int pct = (int)min(99UL, (unsigned long)((upload.totalSize * 100UL) / otaExpectedSize));
+      if (pct != lastOtaPct)
+      {
+        lastOtaPct = pct;
+        drawOtaProgressScreen("Flashing firmware...", pct);
+      }
+    }
   }
   else if (upload.status == UPLOAD_FILE_END)
   {
     if (Update.end(true))
     {
       Serial.printf("OTA Update Success: %u bytes\n", upload.totalSize);
+      drawOtaProgressScreen("Update complete! Rebooting...", 100);
     }
     else
     {
@@ -971,6 +987,7 @@ bool gMdnsOk = false;
 
 void drawModernHeader(const char *title, const char *badgeText = nullptr)
 {
+  (void)badgeText; // Unused; kept in signature so existing callers need no changes
   tft.fillScreen(UI_BG);
   tft.fillRect(0, 0, SCREEN_W, 28, UI_CARD);
   tft.drawFastHLine(0, 28, SCREEN_W, UI_BORDER);
@@ -984,17 +1001,6 @@ void drawModernHeader(const char *title, const char *badgeText = nullptr)
   tft.setTextDatum(ML_DATUM);
   tft.setTextColor(TFT_WHITE, UI_CARD);
   tft.drawString(title, 18, 14, 2);
-
-  if (badgeText != nullptr && badgeText[0] != '\0')
-  {
-    int bw = tft.textWidth(badgeText, 1) + 12;
-    int bx = SCREEN_W - bw - 8;
-    tft.fillRoundRect(bx, 6, bw, 16, 4, UI_CARD_ALT);
-    tft.drawRoundRect(bx, 6, bw, 16, 4, UI_ACCENT);
-    tft.setTextDatum(MC_DATUM);
-    tft.setTextColor(UI_ACCENT, UI_CARD_ALT);
-    tft.drawString(badgeText, bx + (bw / 2), 14, 1);
-  }
   tft.setTextDatum(TL_DATUM);
 }
 
@@ -1051,27 +1057,25 @@ void drawToggleTile(int16_t tileX, int16_t tileY, int16_t tileW, const char *lab
 
 void showWebUpdateInfoScreen(bool mdnsOk)
 {
-  drawModernHeader("Web Settings & Update", "HTTP :80");
+  drawModernHeader("Web Settings & Update");
 
   // Concise single-line subtitle that fits comfortably within 320px
   tft.setFreeFont(nullptr);
   tft.setTextDatum(TL_DATUM);
   tft.setTextColor(UI_TEXT_MUTED, UI_BG);
-  tft.drawString("Open a browser on your phone or PC:", 12, 36, 2);
+  tft.drawString("Open either URL on your phone or PC:", 12, 36, 2);
 
-  // Card 1: Primary .local mDNS Address (y = 60..116)
+  // Option A: Primary .local mDNS Address (y = 60..116)
   tft.fillRoundRect(10, 60, SCREEN_W - 20, 56, 8, UI_CARD);
   tft.drawRoundRect(10, 60, SCREEN_W - 20, 56, 8, mdnsOk ? UI_ACCENT_DK : UI_BORDER);
 
-  tft.fillCircle(28, 88, 11, UI_ACCENT_DK);
-  tft.drawCircle(28, 88, 11, UI_ACCENT);
-  tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(TFT_WHITE, UI_ACCENT_DK);
-  tft.drawString("1", 28, 88, 2);
+  tft.fillCircle(28, 88, 10, mdnsOk ? UI_ACCENT_DK : UI_CARD_ALT);
+  tft.drawCircle(28, 88, 10, mdnsOk ? UI_ACCENT : UI_BORDER);
+  tft.fillCircle(28, 88, 3, mdnsOk ? UI_ACCENT : UI_TEXT_MUTED);
 
   tft.setTextDatum(TL_DATUM);
   tft.setTextColor(UI_TEXT_MUTED, UI_CARD);
-  tft.drawString("HOSTNAME (RECOMMENDED)", 48, 68, 1);
+  tft.drawString("BY DEVICE NAME", 48, 68, 1);
 
   if (mdnsOk)
   {
@@ -1085,31 +1089,29 @@ void showWebUpdateInfoScreen(bool mdnsOk)
     tft.drawString("mDNS unavailable - use IP below", 48, 85, 2);
   }
 
-  // Card 2: Direct IP Address (y = 124..180)
+  // Option B: Direct IP Address (y = 124..180)
   tft.fillRoundRect(10, 124, SCREEN_W - 20, 56, 8, UI_CARD);
-  tft.drawRoundRect(10, 124, SCREEN_W - 20, 56, 8, UI_BORDER);
+  tft.drawRoundRect(10, 124, SCREEN_W - 20, 56, 8, UI_ACCENT_DK);
 
-  tft.fillCircle(28, 152, 11, UI_CARD_ALT);
-  tft.drawCircle(28, 152, 11, UI_BORDER);
-  tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(UI_TEXT_MUTED, UI_CARD_ALT);
-  tft.drawString("2", 28, 152, 2);
+  tft.fillCircle(28, 152, 10, UI_ACCENT_DK);
+  tft.drawCircle(28, 152, 10, UI_ACCENT);
+  tft.fillCircle(28, 152, 3, UI_ACCENT);
 
   tft.setTextDatum(TL_DATUM);
   tft.setTextColor(UI_TEXT_MUTED, UI_CARD);
-  tft.drawString("DIRECT IP ADDRESS", 48, 132, 1);
+  tft.drawString("BY IP ADDRESS", 48, 132, 1);
 
   String ipUrl = "http://" + WiFi.localIP().toString();
-  tft.setTextColor(TFT_WHITE, UI_CARD);
+  tft.setTextColor(UI_ACCENT, UI_CARD);
   tft.drawString(ipUrl, 48, 149, 2);
 
-  // Shared Bottom Action Bar (y = 197..231)
+  // Shared Bottom Action Bar (y = 197..231) - Right-aligned "Back" button matching Wi-Fi screen
   tft.drawFastHLine(10, 189, SCREEN_W - 20, UI_BORDER);
-  const int16_t backX = 10;
+  const int16_t backX = 224;
   const int16_t backY = 197;
-  const int16_t backW = SCREEN_W - 20;
+  const int16_t backW = 86;
   const int16_t backH = 34;
-  drawModernButton(backX, backY, backW, backH, "<  Back to Options", UI_ACCENT_DK, UI_ACCENT, TFT_WHITE);
+  drawModernButton(backX, backY, backW, backH, "Back", UI_ACCENT_DK, UI_ACCENT, TFT_WHITE);
 
   // Wait for user to tap Back
   bool wasTouching = true;
@@ -1122,7 +1124,7 @@ void showWebUpdateInfoScreen(bool mdnsOk)
     {
       if (tx >= backX && tx <= (backX + backW) && ty >= backY && ty <= (backY + backH))
       {
-        tone(AZTOUCH_BEEPER, 784, 50);
+        tone(AZTOUCH_BEEPER, 880, 60);
         break;
       }
     }
@@ -1130,7 +1132,6 @@ void showWebUpdateInfoScreen(bool mdnsOk)
     delay(25);
   }
 }
-
 
 void drawConfigScreenBase(int16_t col1X, int16_t col2X, int16_t tileW,
                           int16_t row1Y, int16_t row2Y, int16_t row3Y,
@@ -1303,7 +1304,7 @@ bool areWeConfiguring(bool mdnsOk)
       // Button 3: Start
       else if (tx >= startX && tx <= (startX + btnW) && ty >= btnY && ty <= (btnY + btnH))
       {
-        tone(AZTOUCH_BEEPER, 1047, 60);
+        tone(AZTOUCH_BEEPER, 880, 60);
         exitNow = true;
       }
     }
@@ -1830,8 +1831,8 @@ void drawSetupPortalScreen(const String &apName, bool showTimeoutHint)
     tft.setTextDatum(TL_DATUM);
   }
 
-  // Right tactile Cancel button
-  drawModernButton(224, 197, 86, 34, "Cancel", UI_DANGER_DK, UI_DANGER, TFT_WHITE);
+  // Right tactile Back button (matches Web Settings & Update screen)
+  drawModernButton(224, 197, 86, 34, "Back", UI_ACCENT_DK, UI_ACCENT, TFT_WHITE);
 }
 
 bool runNonBlockingPortal(WiFiManager &wm, unsigned long durationMs = 600000UL, bool *wasCancelled = nullptr)
@@ -1857,7 +1858,7 @@ bool runNonBlockingPortal(WiFiManager &wm, unsigned long durationMs = 600000UL, 
     {
       if (tx >= 224 && tx <= 310 && ty >= 197 && ty <= 231)
       {
-        tone(AZTOUCH_BEEPER, 440, 80);
+        tone(AZTOUCH_BEEPER, 880, 60);
         wm.stopConfigPortal();
         if (wasCancelled != nullptr)
         {
@@ -1943,14 +1944,34 @@ void writePreferences(String hour, String mins, String day,
   prefs.end();
   hasCachedCoords = false; // Force re-geocoding if destination changed
 
-  // Confirm save visually on screen before rebooting
-  tft.fillScreen(TFT_BLACK);
-  tft.setTextColor(TFT_GREEN, TFT_BLACK);
+  // Confirm save visually using the unified dark-slate card design
+  drawModernHeader("Settings Saved");
+
+  tft.fillRoundRect(12, 44, SCREEN_W - 24, 148, 8, UI_CARD);
+  tft.drawRoundRect(12, 44, SCREEN_W - 24, 148, 8, UI_SUCCESS_DK);
+
+  // Green checkmark badge
+  int16_t cx = SCREEN_W / 2;
+  int16_t cy = 76;
+  tft.fillCircle(cx, cy, 16, UI_SUCCESS_DK);
+  tft.drawCircle(cx, cy, 16, UI_SUCCESS);
+  tft.drawLine(cx - 7, cy, cx - 2, cy + 5, TFT_WHITE);
+  tft.drawLine(cx - 6, cy, cx - 2, cy + 4, TFT_WHITE);
+  tft.drawLine(cx - 2, cy + 5, cx + 8, cy - 6, TFT_WHITE);
+  tft.drawLine(cx - 2, cy + 4, cx + 8, cy - 7, TFT_WHITE);
+
+  tft.setFreeFont(nullptr);
   tft.setTextDatum(MC_DATUM);
-  tft.drawString("Settings saved!", 160, 95, 4);
-  String summary = where + " - " + day + "/" + month + "/" + year + " " + hour + ":" + mins;
-  tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.drawString(summary, 160, 130, 2);
+  tft.setTextColor(UI_SUCCESS, UI_CARD);
+  tft.drawString("Preferences Saved!", cx, 108, 2);
+
+  String destLabel = where.length() > 0 ? where : "Holiday";
+  String summary = destLabel + " - " + day + "/" + month + "/" + year + " " + hour + ":" + mins;
+  tft.setTextColor(TFT_WHITE, UI_CARD);
+  tft.drawString(summary, cx, 134, 2);
+
+  tft.setTextColor(UI_TEXT_MUTED, UI_BG);
+  tft.drawString("Restarting device...", cx, 214, 2);
   tft.setTextDatum(TL_DATUM);
 
   delay(2000);
@@ -2157,7 +2178,8 @@ void updateAutoBacklight(bool isArrived)
 
 void openInAppSetup()
 {
-  LcarsAudio::beepBoot();
+  tone(AZTOUCH_BEEPER, 880, 60);
+
   bool wasWeatherEnabled = gWeatherEnabled;
   bool wasIslandPlusOne = gIslandPlusOne;
 
@@ -2253,9 +2275,8 @@ void setup()
   String savedSsid = getSavedWifiSSID();
   drawBootWelcomeScreen(savedSsid);
 
-  // 2. Start boot chime immediately after screen turns on (non-blocking)
+  // 2. Initialize audio pin silently (no startup chime)
   LcarsAudio::begin(AZTOUCH_BEEPER);
-  LcarsAudio::beepBoot();
 
   Serial.begin(115200);
   touch.begin();
@@ -2299,7 +2320,6 @@ void setup()
 
     while (WiFi.status() != WL_CONNECTED && (millis() - wifiStartMs < 12000UL))
     {
-      LcarsAudio::update(); // Keep boot chime playing smoothly
       unsigned long now = millis();
       if (now - lastDotMs >= 300UL)
       {
@@ -2311,12 +2331,6 @@ void setup()
       delay(20);
     }
     wifiConnected = (WiFi.status() == WL_CONNECTED);
-  }
-
-  // Ensure boot chime finishes if Wi-Fi connected ultra-fast
-  while (LcarsAudio::isEnabled() && millis() < 450)
-  {
-    LcarsAudio::update();
   }
 
   // Fall back to WiFiManager AP hotspot if no saved Wi-Fi or connection failed
@@ -2347,7 +2361,6 @@ void setup()
   }
 
   wifiManager.setConfigPortalBlocking(true);
-
   // Immediately turn Wi-Fi icon & text GREEN upon connection
   updateBootStepRow(0, BOOT_STEP_DONE, "Connected to Wi-Fi", WiFi.SSID());
 
@@ -2447,9 +2460,11 @@ void setup()
   }
   else
   {
-    char timeReadyBuf[24];
-    snprintf(timeReadyBuf, sizeof(timeReadyBuf), "Synced: %02d:%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
-    updateBootStepRow(1, BOOT_STEP_DONE, "Internet time synced", String(timeReadyBuf));
+    String timeReadyStr = "Synced: " +
+                          String(timeinfo.tm_hour < 10 ? "0" : "") + String(timeinfo.tm_hour) + ":" +
+                          String(timeinfo.tm_min < 10 ? "0" : "") + String(timeinfo.tm_min) + ":" +
+                          String(timeinfo.tm_sec < 10 ? "0" : "") + String(timeinfo.tm_sec);
+    updateBootStepRow(1, BOOT_STEP_DONE, "Internet time synced", timeReadyStr);
     delay(650); // Brief pause so both green icons are clearly visible
   }
 
@@ -2483,7 +2498,6 @@ void setup()
 
   Serial.println("setup() complete");
 }
-
 void loop()
 {
   static time_t lastRenderedSec = 0;
