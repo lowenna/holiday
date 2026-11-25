@@ -31,7 +31,7 @@ static bool ensureCrabSprite()
 {
     if (!crabSprReady)
     {
-        crabSpr.setColorDepth(16);
+        crabSpr.setColorDepth(8); // 320x144x8-bit = ~46 KB (half the RAM of 16-bit)
         if (crabSpr.createSprite(CRAB_SCR_W, BAND_H) == nullptr)
         {
             Serial.println("[CRAB] Failed to allocate 320x144 sprite!");
@@ -339,6 +339,7 @@ bool handleScreenSaverTap()
 }
 
 // Main screensaver update loop (keeps existing signature for google-ai-main.cpp)
+// Main screensaver update loop (keeps existing signature for google-ai-main.cpp)
 void updateScreenSaverEyes(bool forceInit = false)
 {
     static unsigned long lastFrameMs = 0;
@@ -358,6 +359,7 @@ void updateScreenSaverEyes(bool forceInit = false)
         crabDir = 1;
         walkPhase = 0.0f;
         lastDriftOffset = driftOffset;
+        tft.fillRect(0, BAND_Y, CRAB_SCR_W, BAND_H, TFT_BLACK);
         drawStaticBeachSky(driftOffset);
         renderHermitCrabFrame(timeSec, driftOffset);
         lastFrameMs = now;
