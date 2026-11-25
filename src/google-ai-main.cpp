@@ -44,6 +44,8 @@ bool otaInProgress = false;
 
 extern void updateScreenSaverEyes(bool);                          // eyes.cpp
 extern bool handleScreenSaverTap();                               // eyes.cpp
+extern void drawScreenSaverClock(int days, int hours, int mins, int secs, bool showColon, bool isArrived, time_t rawlocal, int driftOffset); // eyes.cpp
+extern int getScreenSaverDriftOffset();                           // eyes.cpp
 extern void drawWeatherBadge();                                   // weather.cpp
 extern void fetchDestinationWeather();                            // weather.cpp
 extern bool handleWeatherForecastTouch(uint16_t tx, uint16_t ty); // weather.cpp
@@ -2259,47 +2261,31 @@ void setup()
   bool wifiConnected = wifiManager.autoConnect(otaHostname);
   if (!wifiConnected)
   {
-    // Give a rebooting router 15 extra seconds before restarting the ESP32
-    tft.fillScreen(TFT_BLACK);
-    tft.setTextDatum(MC_DATUM);
-    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-    tft.drawString("Wi-Fi connection lost - retrying...", SCREEN_W / 2, 100, 2);
-    tft.setTextDatum(TL_DATUM);
-
-    WiFi.reconnect();
-    unsigned long retryStart = millis();
-    while (WiFi.status() != WL_CONNECTED && (millis() - retryStart < 15000UL))
+    // If WiFiManager entered AP config mode (e.g., wrong password or new network),
+    // stay in the non-blocking setup portal with live 10-minute countdown!
+    if (wifiManager.getConfigPortalActive())
     {
-      delay(500);
-    }
-    wifiConnected = (WiFi.status() == WL_CONNECTED);
-  }
+      bool portalCancelled = false;
+      bool timedOut = runNonBlockingPortal(wifiManager, 600000UL, &portalCancelled);
+      wifiConnected = (WiFi.status() == WL_CONNECTED);
 
-  if (!wifiConnected)
-  {
-    showScreenError("WI-FI ERROR", "Failed to connect to Wi-Fi.\nRestarting in 5 seconds...", true, 5000);
-    ESP.restart();
+      if (!wifiConnected)
+      {
+        showScreenError("WI-FI ERROR",
+                        timedOut ? "Setup portal timed out.\nRestarting in 5 seconds..."
+                                 : "Wi-Fi setup cancelled.\nRestarting in 5 seconds...",
+                        true, 5000);
+        ESP.restart();
+      }
+    }
+    else
+    {
+      showScreenError("WI-FI ERROR", "Failed to connect to Wi-Fi.\nRestarting in 5 seconds...", true, 5000);
+      ESP.restart();
+    }
   }
 
   wifiManager.setConfigPortalBlocking(true);
-
-  if (!wifiConnected)
-  {
-    showScreenError("WI-FI ERROR", "Failed to connect to Wi-Fi.\nRestarting in 5 seconds...", true, 5000);
-    ESP.restart();
-  }
-
-  // Save holiday details immediately if entered during initial autoConnect setup portal
-  if (shouldSaveConfig)
-  {
-    writePreferences(
-        custom_hol_hour.getValue(),
-        custom_hol_mins.getValue(),
-        custom_hol_day.getValue(),
-        custom_hol_month.getValue(),
-        custom_hol_year.getValue(),
-        custom_hol_where.getValue());
-  }
 
   // 6. Start OTA; only show the 10s Settings screen if unconfigured or user holds the screen
   bool mdnsOk = setupOTA();
@@ -2502,6 +2488,7 @@ void loop()
     inDimClockMode = false;
     inScreenSaver = true;
     updateScreenSaverEyes(true);
+    lastRenderedSec = 0; // Force immediate LED clock draw on screensaver start
     yield();
     return;
   }
@@ -2554,7 +2541,14 @@ void loop()
   {
     if (freshTap)
     {
-      if (handleScreenSaverTap())
+      // Tapping the 7-segment LED clock in the night sky toggles countdown vs local time
+      if (ty <= 78 && !isArrived && hasDestUtcOffset)
+      {
+        showCountdownAsLocalTime = !showCountdownAsLocalTime;
+        tone(AZTOUCH_BEEPER, showCountdownAsLocalTime ? 1047 : 784, 45);
+        lastRenderedSec = 0; // Force immediate clock redraw below
+      }
+      else if (handleScreenSaverTap())
       {
         tone(AZTOUCH_BEEPER, 1047, 50);
         wakeFromScreenSaver(isArrived);
@@ -2574,8 +2568,6 @@ void loop()
     else
     {
       updateScreenSaverEyes(false);
-      yield();
-      return;
     }
   }
   // Wake from clock-only dim mode on any tap, absorbing the wake-up tap
@@ -2631,18 +2623,19 @@ void loop()
     }
   }
 
-  if (gScreensaverEnabled && (millis() - lastInteractionMillis >= SCREENSAVER_TIMEOUT_MS))
+  if (gScreensaverEnabled && !inScreenSaver && (millis() - lastInteractionMillis >= SCREENSAVER_TIMEOUT_MS))
   {
     isWeatherPopupOpen = false;
     isBirthdayPopupOpen = false;
     inDimClockMode = false;
     inScreenSaver = true;
     updateScreenSaverEyes(true);
+    lastRenderedSec = 0;
     yield();
     return;
   }
 
-  if (freshTap && !inDimClockMode && !isBirthdayPopupOpen && handleWeatherForecastTouch(tx, ty))
+  if (freshTap && !inScreenSaver && !inDimClockMode && !isBirthdayPopupOpen && handleWeatherForecastTouch(tx, ty))
   {
     tone(AZTOUCH_BEEPER, 880, 45);
     lastRenderedSec = 0;
@@ -2651,7 +2644,7 @@ void loop()
 
   // Main countdown area touch handling (before arrival):
   // Toggle between countdown (DD.HH:MM:SS) and destination local time (HH:MM:SS in cyan)
-  if (freshTap && !inDimClockMode && !isWeatherPopupOpen && !isBirthdayPopupOpen && !isArrived && hasDestUtcOffset &&
+  if (freshTap && !inScreenSaver && !inDimClockMode && !isWeatherPopupOpen && !isBirthdayPopupOpen && !isArrived && hasDestUtcOffset &&
       ty >= COUNTDOWN_Y && ty <= (COUNTDOWN_Y + COUNTDOWN_H))
   {
     showCountdownAsLocalTime = !showCountdownAsLocalTime;
@@ -2688,6 +2681,10 @@ void loop()
         {
           wakeFromDimClockMode(true);
         }
+        else if (inScreenSaver)
+        {
+          wakeFromScreenSaver(true);
+        }
         else
         {
           drawWhere(true);
@@ -2705,10 +2702,17 @@ void loop()
 
     if (!isWeatherPopupOpen && !isBirthdayPopupOpen)
     {
-      drawCountdownLeft(diffDays, diffHours, diffMins, remSecs, blinkState, isArrived, rawlocal);
+      if (inScreenSaver)
+      {
+        drawScreenSaverClock(diffDays, diffHours, diffMins, remSecs, blinkState, isArrived, rawlocal, getScreenSaverDriftOffset());
+      }
+      else
+      {
+        drawCountdownLeft(diffDays, diffHours, diffMins, remSecs, blinkState, isArrived, rawlocal);
+      }
     }
 
-    if (!inDimClockMode)
+    if (!inDimClockMode && !inScreenSaver)
     {
       displayCurrentTimeSprite(rawlocal);
 
