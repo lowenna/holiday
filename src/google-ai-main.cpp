@@ -28,11 +28,18 @@
  https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/src/weather.cpp
  https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/src/audio.cpp
  https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/src/eyes.cpp
+ https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/src/ota_updater.cpp
  https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/include/maldives.h
  https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/platformio.ini
+ https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/src/publish.cmd
+ https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/scripts/publish_firmware.py
+ https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/include/ota_uodater.h
+ https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/include/audio.h
+ https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/include/weather.h
+ https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/include/eyes.h
+ https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/include/fw_version.h
  
- 
-  Can you confirm you can see these files. If so, please confirm what they do so I can be sure
+ Can you confirm you can see these files. If so, please confirm what they do so I can be sure
  you can help me update it. 
  
  The target device is an ESP32 AZ-Delivery DevKit V4 with a 2.8" AZ-Touch MOD display. 
@@ -103,6 +110,22 @@ unsigned long lastInteractionMillis = 0;
 
 // NTP Timezone (UK GMT/BST) & OTA Hostname
 const char *MY_TZ = "GMT0BST,M3.5.0/1,M10.5.0";
+
+// ============================================================================
+// Unified Modern UI Design System (Settings, Web Info & Wi-Fi Portal)
+// ============================================================================
+constexpr uint16_t UI_BG         = 0x0000; // Deep black canvas
+constexpr uint16_t UI_CARD       = 0x18E3; // Elevated dark slate card
+constexpr uint16_t UI_CARD_ALT   = 0x10A2; // Subtle recessed container
+constexpr uint16_t UI_BORDER     = 0x39E7; // Crisp slate hairline border
+constexpr uint16_t UI_ACCENT     = 0x067F; // Modern sky-cyan accent
+constexpr uint16_t UI_ACCENT_DK  = 0x02B0; // Deep cyan button fill
+constexpr uint16_t UI_SUCCESS    = 0x07E8; // Vibrant mint-green
+constexpr uint16_t UI_SUCCESS_DK = 0x0386; // Deep emerald button fill
+constexpr uint16_t UI_DANGER     = 0xF986; // Soft coral-red
+constexpr uint16_t UI_DANGER_DK  = 0x6000; // Deep crimson button fill
+constexpr uint16_t UI_TEXT_MUTED = 0x9CD3; // Muted cool grey for secondary labels
+
 
 // ============================================================================
 // Global Objects & State
@@ -186,6 +209,7 @@ void drawStaticBackgroundImage();
 void displayLines();
 void drawWhere(bool isArrived);
 void drawOtaProgressScreen(const char *statusText, int percent);
+void drawModernHeader(const char *title, const char *badgeText = nullptr);
 
 void handleOTAUpload()
 {
@@ -576,32 +600,50 @@ void drawOtaProgressScreen(const char *statusText, int percent)
   if (!otaInProgress)
   {
     otaInProgress = true;
-    tft.fillScreen(TFT_BLACK);
-    tft.fillRect(0, 0, SCREEN_W, 26, TFT_NAVY);
-    tft.setTextColor(TFT_WHITE, TFT_NAVY);
+    drawModernHeader("Firmware Update");
+
+    // Elevated dark-slate progress card (y = 40..186)
+    tft.fillRoundRect(10, 40, SCREEN_W - 20, 146, 8, UI_CARD);
+    tft.drawRoundRect(10, 40, SCREEN_W - 20, 146, 8, UI_ACCENT_DK);
+
+    // Bottom divider & safety notice matching other screens
+    tft.drawFastHLine(10, 194, SCREEN_W - 20, UI_BORDER);
+    tft.setFreeFont(nullptr);
     tft.setTextDatum(MC_DATUM);
-    tft.drawString("UPDATE", SCREEN_W / 2, 13, 2);
+    tft.setTextColor(UI_TEXT_MUTED, UI_BG);
+    tft.drawString("Do not power off device", SCREEN_W / 2, 214, 2);
   }
 
+  tft.setFreeFont(nullptr);
   tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(TFT_CYAN, TFT_BLACK);
-  tft.fillRect(0, 50, SCREEN_W, 30, TFT_BLACK);
-  tft.drawString(statusText, SCREEN_W / 2, 65, 2);
 
-  // Progress bar
-  int barW = 260;
-  int barH = 22;
-  int barX = (SCREEN_W - barW) / 2;
-  int barY = 105;
-  tft.drawRect(barX, barY, barW, barH, TFT_WHITE);
-  int fillW = map(constrain(percent, 0, 100), 0, 100, 0, barW - 4);
-  tft.fillRect(barX + 2, barY + 2, fillW, barH - 4, TFT_GREEN);
+  // Status label inside card
+  tft.fillRect(18, 54, SCREEN_W - 36, 24, UI_CARD);
+  tft.setTextColor(UI_ACCENT, UI_CARD);
+  tft.drawString(statusText, SCREEN_W / 2, 66, 2);
 
-  char pctBuf[16];
-  snprintf(pctBuf, sizeof(pctBuf), "%d%%", percent);
-  tft.fillRect(0, 140, SCREEN_W, 26, TFT_BLACK);
-  tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.drawString(pctBuf, SCREEN_W / 2, 152, 4);
+  // Rounded Progress Bar inside card
+  const int16_t barW = 264;
+  const int16_t barH = 22;
+  const int16_t barX = (SCREEN_W - barW) / 2;
+  const int16_t barY = 96;
+
+  tft.fillRoundRect(barX, barY, barW, barH, 6, UI_CARD_ALT);
+  tft.drawRoundRect(barX, barY, barW, barH, 6, UI_BORDER);
+
+  int clampedPct = constrain(percent, 0, 100);
+  int fillW = map(clampedPct, 0, 100, 0, barW - 4);
+  if (fillW > 4)
+  {
+    tft.fillRoundRect(barX + 2, barY + 2, fillW, barH - 4, 4, UI_SUCCESS);
+  }
+
+  // Percentage readout inside card
+  String pctStr = String(clampedPct) + "%";
+  tft.fillRect(90, 132, 140, 32, UI_CARD);
+  tft.setTextColor(TFT_WHITE, UI_CARD);
+  tft.drawString(pctStr, SCREEN_W / 2, 148, 4);
+  tft.setTextDatum(TL_DATUM);
 }
 
 // ============================================================================
@@ -1029,24 +1071,10 @@ void initSprites()
 }
 
 
-// ============================================================================
-// Unified Modern UI Design System (Settings, Web Info & Wi-Fi Portal)
-// ============================================================================
-constexpr uint16_t UI_BG         = 0x0000; // Deep black canvas
-constexpr uint16_t UI_CARD       = 0x18E3; // Elevated dark slate card
-constexpr uint16_t UI_CARD_ALT   = 0x10A2; // Subtle recessed container
-constexpr uint16_t UI_BORDER     = 0x39E7; // Crisp slate hairline border
-constexpr uint16_t UI_ACCENT     = 0x067F; // Modern sky-cyan accent
-constexpr uint16_t UI_ACCENT_DK  = 0x02B0; // Deep cyan button fill
-constexpr uint16_t UI_SUCCESS    = 0x07E8; // Vibrant mint-green
-constexpr uint16_t UI_SUCCESS_DK = 0x0386; // Deep emerald button fill
-constexpr uint16_t UI_DANGER     = 0xF986; // Soft coral-red
-constexpr uint16_t UI_DANGER_DK  = 0x6000; // Deep crimson button fill
-constexpr uint16_t UI_TEXT_MUTED = 0x9CD3; // Muted cool grey for secondary labels
 
 bool gMdnsOk = false;
 
-void drawModernHeader(const char *title, const char *badgeText = nullptr)
+void drawModernHeader(const char *title, const char *badgeText)
 {
   (void)badgeText; // Unused; kept in signature so existing callers need no changes
   tft.fillScreen(UI_BG);
