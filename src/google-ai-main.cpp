@@ -361,12 +361,13 @@ bool setupOTA()
         return;
       }
       const formData = new FormData();
-      formData.append('update', fwInput.files);
+      formData.append('update', fwInput.files[0]);
 
       progWrap.style.display = 'block';
       progBar.style.width = '0%';
       statusEl.textContent = 'Uploading update...';
       document.getElementById('uploadBtn').disabled = true;
+
 
       const xhr = new XMLHttpRequest();
       xhr.open('POST', '/update', true);

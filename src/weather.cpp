@@ -471,7 +471,7 @@ void drawHourlyForecastBar()
             if (fgPix != TFT_BLACK)
             {
                 uint16_t bgPix = hSpr.readPixel(x, y);
-                uint8_t alpha = (fgPix == TFT_NAVY) ? cardBgAlpha : detailAlpha;
+                uint8_t alpha = (fgPix <= 0x001F) ? cardBgAlpha : detailAlpha;
                 hSpr.drawPixel(x, y, tft.alphaBlend(alpha, fgPix, bgPix));
             }
         }
@@ -481,6 +481,7 @@ void drawHourlyForecastBar()
     hSpr.pushSprite(0, HOURLY_Y);
     hSpr.deleteSprite();
 }
+
 
 void drawWeatherDetailPopup()
 {
