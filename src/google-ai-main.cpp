@@ -43,6 +43,7 @@ WebServer otaServer(80);
 bool otaInProgress = false;
 
 extern void updateScreenSaverEyes(bool);                          // eyes.cpp
+extern bool handleScreenSaverTap();                               // eyes.cpp
 extern void drawWeatherBadge();                                   // weather.cpp
 extern void fetchDestinationWeather();                            // weather.cpp
 extern bool handleWeatherForecastTouch(uint16_t tx, uint16_t ty); // weather.cpp
@@ -133,6 +134,7 @@ int gLastCelebratedBdayYear = -1;
 bool isBirthdayPopupOpen = false;
 unsigned long birthdayPopupOpenedMs = 0;
 bool triggerTestBirthday = false;
+bool triggerTestScreensaver = false;
 time_t rawhol = 0;
 
 // ============================================================================
@@ -279,7 +281,7 @@ bool setupOTA()
     }
     #progWrap { display: none; margin-top: 14px; background: #2c2c2e; border-radius: 8px; overflow: hidden; height: 22px; }
     #progBar { width: 0%; height: 100%; background: #00acc1; transition: width 0.2s; }
-    #otaStatus, #bdayStatus { font-size: 13px; color: #aaa; margin-top: 8px; text-align: center; }
+    #otaStatus, #bdayStatus, #ssaverStatus { font-size: 13px; color: #aaa; margin-top: 8px; text-align: center; }
   </style>
 </head>
 <body>
@@ -311,8 +313,9 @@ bool setupOTA()
     </form>
     <button type="button" class="test-btn" id="testBdayBtn">Test Birthday Celebration</button>
     <div id="bdayStatus"></div>
+    <button type="button" class="test-btn" id="testSsaverBtn" style="background:#00695c;">Test Screensaver</button>
+    <div id="ssaverStatus"></div>
   </div>
-
   <div class="card">
     <h2>Update this device</h2>
     <p style="font-size:13px;color:#aaa;margin-top:0">Host: <b>)rawliteral" + String(otaHostname) + R"rawliteral(.local</b></p>
@@ -332,6 +335,15 @@ bool setupOTA()
         .then(function(r) { return r.text(); })
         .then(function(txt) { bStatus.textContent = txt; })
         .catch(function() { bStatus.textContent = 'Triggered!'; });
+    });
+
+    document.getElementById('testSsaverBtn').addEventListener('click', function() {
+      const sStatus = document.getElementById('ssaverStatus');
+      sStatus.textContent = 'Starting hermit crab screensaver...';
+      fetch('/testssaver', { method: 'POST' })
+        .then(function(r) { return r.text(); })
+        .then(function(txt) { sStatus.textContent = txt; })
+        .catch(function() { sStatus.textContent = 'Triggered!'; });
     });
 
     const fwInput = document.getElementById('fwFile');
@@ -390,6 +402,12 @@ bool setupOTA()
     triggerTestBirthday = true;
     otaServer.send(200, "text/plain", "Birthday celebration triggered!"); });
 
+  // Trigger an immediate Screensaver test on the display
+  otaServer.on("/testssaver", HTTP_POST, []()
+               {
+    triggerTestScreensaver = true;
+    otaServer.send(200, "text/plain", "Screensaver triggered!"); });
+
   // Handle Browser Settings Form Submission
   otaServer.on("/save", HTTP_POST, []()
                {
@@ -416,7 +434,7 @@ bool setupOTA()
       return;
     }
 
-        // Save toggle switches & birthday date to NVS first
+    // Save toggle switches & birthday date to NVS first
     gScreensaverEnabled = otaServer.hasArg("ssaver");
     gDimmerEnabled = otaServer.hasArg("dim");
     gWeatherEnabled = otaServer.hasArg("wxen");
@@ -2475,6 +2493,19 @@ void loop()
     lastRenderedSec = 0;
   }
 
+  // Handle web dashboard "Test Screensaver" button
+  if (triggerTestScreensaver)
+  {
+    triggerTestScreensaver = false;
+    isWeatherPopupOpen = false;
+    isBirthdayPopupOpen = false;
+    inDimClockMode = false;
+    inScreenSaver = true;
+    updateScreenSaverEyes(true);
+    yield();
+    return;
+  }
+
   // Automatic 08:30 destination local time birthday celebration (once per year)
   if (gBirthdayEnabled && isBirthdayToday(rawlocal))
   {
@@ -2523,8 +2554,19 @@ void loop()
   {
     if (freshTap)
     {
-      wakeFromScreenSaver(isArrived);
-      lastRenderedSec = 0;
+      if (handleScreenSaverTap())
+      {
+        tone(AZTOUCH_BEEPER, 1047, 50);
+        wakeFromScreenSaver(isArrived);
+        lastRenderedSec = 0;
+      }
+      else
+      {
+        // Cute startled "bloop" chirp when crab ducks into its shell
+        tone(AZTOUCH_BEEPER, 520, 45);
+        delay(50);
+        tone(AZTOUCH_BEEPER, 330, 70);
+      }
     }
     else
     {
@@ -2533,7 +2575,6 @@ void loop()
       return;
     }
   }
-
   // Wake from clock-only dim mode on any tap, absorbing the wake-up tap
   if (inDimClockMode && freshTap)
   {

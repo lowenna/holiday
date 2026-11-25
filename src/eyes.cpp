@@ -2,576 +2,416 @@
 
 extern TFT_eSPI tft;
 
-// Pre-baked 48x48 high-detail iris texture (~4.6 KB RAM) computed once at startup
-constexpr int IRIS_TEX_SIZE = 48;
-uint16_t irisTex[IRIS_TEX_SIZE * IRIS_TEX_SIZE];
-bool irisTexReady = false;
-
 // ============================================================================
-// Blinking Eyes Screen Saver (Activates after SCREENSAVER_TIMEROUT_MS of no touch)
+// Cute Hermit Crab Beach Screensaver (Replaces Blinking Eyes)
 // ============================================================================
 
-// Persistent off-screen sprite (~38.9 KB) allocated once to avoid heap fragmentation
-TFT_eSprite eyeSpr(&tft);
-bool eyeSprReady = false;
+constexpr int16_t CRAB_SCR_W = 320;
+constexpr int16_t CRAB_SCR_H = 240;
+constexpr int16_t BAND_Y = 96;      // Top of active animation band (y = 96..239)
+constexpr int16_t BAND_H = 144;     // 320x144x16-bit sprite = ~92 KB
 
-// TFT_eSprite eyeSpr(&tft);
-TFT_eSprite eyeBgLeft(&tft);
-TFT_eSprite eyeBgRight(&tft);
-bool eyeAssetsReady = false;
+static TFT_eSprite crabSpr(&tft);
+static bool crabSprReady = false;
 
-// Fast 16-bit RGB565 linear colour blend (alpha: 0 = bg, 255 = fg)
-// Fixed 16-bit RGB565 linear colour blend using signed channel deltas (prevents yellow underflow)
-static inline uint16_t blend565(uint16_t bg, uint16_t fg, uint8_t alpha)
+enum CrabState
 {
-    if (alpha == 0)
-        return bg;
-    if (alpha == 255)
-        return fg;
+    CRAB_WALKING,
+    CRAB_HIDING_FULL,
+    CRAB_PEEKING
+};
 
-    int32_t bgR = (bg >> 11) & 0x1F;
-    int32_t bgG = (bg >> 5) & 0x3F;
-    int32_t bgB = bg & 0x1F;
+static CrabState crabState = CRAB_WALKING;
+static unsigned long stateStartedMs = 0;
+static float crabX = 160.0f;
+static int crabDir = 1; // 1 = right, -1 = left
+static float walkPhase = 0.0f;
 
-    int32_t fgR = (fg >> 11) & 0x1F;
-    int32_t fgG = (fg >> 5) & 0x3F;
-    int32_t fgB = fg & 0x1F;
-
-    uint16_t r = (uint16_t)(bgR + (((fgR - bgR) * alpha) >> 8));
-    uint16_t g = (uint16_t)(bgG + (((fgG - bgG) * alpha) >> 8));
-    uint16_t b = (uint16_t)(bgB + (((fgB - bgB) * alpha) >> 8));
-
-    return (r << 11) | (g << 5) | b;
-}
-
-bool ensureEyeSprite()
+static bool ensureCrabSprite()
 {
-    if (!eyeSprReady)
+    if (!crabSprReady)
     {
-        eyeSpr.setColorDepth(16);
-        if (eyeSpr.createSprite(152, 128) == nullptr)
+        crabSpr.setColorDepth(16);
+        if (crabSpr.createSprite(CRAB_SCR_W, BAND_H) == nullptr)
         {
-            Serial.println("Failed to allocate eyeSpr - low heap!");
+            Serial.println("[CRAB] Failed to allocate 320x144 sprite!");
             return false;
         }
-        eyeSprReady = true;
+        crabSprReady = true;
     }
     return true;
 }
 
-static inline uint16_t swap16(uint16_t c)
+// Draw static night-beach sky + gentle stars above the active band (y = 0..95)
+static void drawStaticBeachSky(int driftOffset)
 {
-    return (uint16_t)((c << 8) | (c >> 8));
+    tft.fillRect(0, 0, CRAB_SCR_W, BAND_Y, TFT_BLACK);
+
+    // Subtle deep-twilight horizon glow near y = 80..95
+    tft.fillRect(0, 82, CRAB_SCR_W, 8, 0x0084);
+    tft.fillRect(0, 90, CRAB_SCR_W, 6, 0x0107);
+
+    // Twinkling stars with slow burn-in drift
+    const int starX[] = {28, 74, 118, 165, 212, 258, 296, 48, 142, 238, 190, 95};
+    const int starY[] = {16, 34, 14, 28, 18, 38, 20, 56, 48, 54, 66, 68};
+    const uint16_t starCol[] = {TFT_WHITE, TFT_CYAN, TFT_YELLOW, TFT_SILVER};
+
+    for (int i = 0; i < 12; i++)
+    {
+        int sx = (starX[i] + driftOffset + CRAB_SCR_W) % CRAB_SCR_W;
+        int sy = starY[i];
+        uint16_t col = starCol[i % 4];
+        tft.drawPixel(sx, sy, col);
+        if (i % 3 == 0)
+        {
+            tft.drawPixel(sx - 1, sy, TFT_DARKGREY);
+            tft.drawPixel(sx + 1, sy, TFT_DARKGREY);
+            tft.drawPixel(sx, sy - 1, TFT_DARKGREY);
+            tft.drawPixel(sx, sy + 1, TFT_DARKGREY);
+        }
+    }
 }
 
-// Fast bilinear texture lookup for smooth sub-pixel iris rendering
-static inline uint16_t sampleIrisBilinear(float u, float v)
+// Draw beach water edge & warm golden sand inside the sprite (local y = 0..143)
+static void drawBeachBackground(TFT_eSprite &spr, float timeSec, int driftOffset)
 {
-    float fx = constrain((u * 0.5f + 0.5f) * (IRIS_TEX_SIZE - 1), 0.0f, (float)(IRIS_TEX_SIZE - 2));
-    float fy = constrain((v * 0.5f + 0.5f) * (IRIS_TEX_SIZE - 1), 0.0f, (float)(IRIS_TEX_SIZE - 2));
-    int ix = (int)fx, iy = (int)fy;
-    uint8_t wx = (uint8_t)((fx - ix) * 255.0f);
-    uint8_t wy = (uint8_t)((fy - iy) * 255.0f);
+    // 1. Calm moonlit ocean strip at top of band (local y = 0..26)
+    spr.fillRect(0, 0, CRAB_SCR_W, 18, 0x018B);  // Deep lagoon blue
+    spr.fillRect(0, 18, CRAB_SCR_W, 8, 0x02B0);  // Shallow turquoise
 
-    int idx = iy * IRIS_TEX_SIZE + ix;
-    uint16_t top = blend565(irisTex[idx], irisTex[idx + 1], wx);
-    uint16_t bot = blend565(irisTex[idx + IRIS_TEX_SIZE], irisTex[idx + IRIS_TEX_SIZE + 1], wx);
-    return blend565(top, bot, wy);
+    // Gentle animated wave foam line (local y = 26..30)
+    int foamShift = (int)(sinf(timeSec * 1.6f) * 3.0f);
+    spr.fillRect(0, 26 + foamShift, CRAB_SCR_W, 3, 0x9F7F); // Soft seafoam
+
+    // 2. Wet sand & warm golden beach sand (local y = 29..143)
+    spr.fillRect(0, 29 + foamShift, CRAB_SCR_W, 12, 0x9B86); // Wet darker sand
+    spr.fillRect(0, 41 + foamShift, CRAB_SCR_W, BAND_H - (41 + foamShift), 0xE58B); // Warm golden sand
+    spr.fillRect(0, 118, CRAB_SCR_W, 26, 0xC468); // Foreground sand shadow
+
+    // 3. Subtle sand speckles & tiny decorative beach pebbles
+    const uint16_t speckCols[] = {0xD4C9, 0xF691, 0xB3A6};
+    for (int i = 0; i < 42; i++)
+    {
+        int px = ((i * 73) + driftOffset) % CRAB_SCR_W;
+        if (px < 0) px += CRAB_SCR_W;
+        int py = 46 + ((i * 29) % 92);
+        spr.fillCircle(px, py, (i % 5 == 0) ? 2 : 1, speckCols[i % 3]);
+    }
+
+    // Tiny starfish / seashell detail on the sand
+    int starSx = (58 + driftOffset + CRAB_SCR_W) % CRAB_SCR_W;
+    int starSy = 124;
+    spr.drawLine(starSx - 4, starSy, starSx + 4, starSy, 0xF986);
+    spr.drawLine(starSx, starSy - 4, starSx, starSy + 4, 0xF986);
+    spr.drawLine(starSx - 3, starSy - 3, starSx + 3, starSy + 3, 0xF986);
+    spr.drawLine(starSx - 3, starSy + 3, starSx + 3, starSy - 3, 0xF986);
 }
 
-// Pre-baked 48x48 multi-zone anatomical iris texture (~4.6 KB RAM)
-
-void buildIrisTexture()
+// Draw the gorgeous spiral conch shell centered around (cx, cy)
+// dir: 1 = facing right (shell spirals to left), -1 = facing left (shell spirals to right)
+static void drawGorgeousShell(TFT_eSprite &spr, int cx, int cy, int dir, float tiltAngle)
 {
-    if (irisTexReady)
+    // Gorgeous coral, sunset-peach, cream, and magenta-rose palette
+    const uint16_t colOuter    = 0xFA68; // Warm coral-salmon
+    const uint16_t colMid      = 0xFD4C; // Peachy sunset orange
+    const uint16_t colCream    = 0xFF77; // Warm pearl cream
+    const uint16_t colTip      = 0xE26B; // Rose-magenta apex
+    const uint16_t colRim      = 0x78E2; // Crisp dark outline
+
+    int backDir = -dir;
+    int bobY = (int)(sinf(tiltAngle) * 2.0f);
+
+    // 1. Pointed spiral spire (back-most whorls)
+    int spireX = cx + backDir * 30;
+    int spireY = cy - 12 + bobY;
+    spr.fillTriangle(
+        spireX + backDir * 12, spireY - 4,
+        spireX - backDir * 4,  spireY - 12,
+        spireX - backDir * 2,  spireY + 6,
+        colTip);
+    spr.drawLine(spireX + backDir * 12, spireY - 4, spireX - backDir * 4, spireY - 12, colRim);
+    spr.drawLine(spireX + backDir * 12, spireY - 4, spireX - backDir * 2, spireY + 6, colRim);
+
+    // 2. Whorl 3 (smaller rear spiral chamber)
+    int w3x = cx + backDir * 21;
+    int w3y = cy - 10 + bobY;
+    spr.fillCircle(w3x, w3y, 12, colCream);
+    spr.drawCircle(w3x, w3y, 12, colRim);
+    spr.fillCircle(w3x - backDir * 2, w3y - 3, 4, TFT_WHITE);
+
+    // 3. Whorl 2 (middle chamber)
+    int w2x = cx + backDir * 11;
+    int w2y = cy - 8 + bobY;
+    spr.fillCircle(w2x, w2y, 16, colMid);
+    spr.drawCircle(w2x, w2y, 16, colRim);
+    spr.drawArc(w2x, w2y, 13, 11, 200, 340, colCream, colMid);
+    spr.fillCircle(w2x - backDir * 3, w2y - 5, 4, TFT_WHITE);
+
+    // 4. Main Body Whorl (large front chamber)
+    int w1x = cx - backDir * 2;
+    int w1y = cy - 5 + bobY;
+    spr.fillCircle(w1x, w1y, 21, colOuter);
+    spr.drawCircle(w1x, w1y, 21, colRim);
+    spr.drawArc(w1x, w1y, 17, 15, 190, 350, colCream, colOuter);
+    spr.drawArc(w1x, w1y, 12, 10, 200, 340, colMid, colOuter);
+    spr.fillCircle(w1x - backDir * 4, w1y - 8, 5, 0xFFDF);
+    spr.fillCircle(w1x - backDir * 8, w1y - 4, 2, TFT_WHITE);
+
+    // 5. Dark hollow shell opening (aperture) facing forward
+    int openX = cx + dir * 13;
+    int openY = cy + 3 + bobY;
+    spr.fillEllipse(openX, openY, 10, 14, 0x3041);
+    spr.drawEllipse(openX, openY, 11, 15, colCream);
+    spr.drawEllipse(openX, openY, 12, 16, colRim);
+}
+
+// Draw cute cartoon eyes on stalks + twitching antennae
+static void drawCrabEyesAndAntennae(TFT_eSprite &spr, int baseX, int baseY, int dir,
+                                    float lookX, float lookY, bool blinking, float peekRatio)
+{
+    if (peekRatio <= 0.05f)
         return;
-    const float half = (IRIS_TEX_SIZE - 1) * 0.5f;
 
-    for (int y = 0; y < IRIS_TEX_SIZE; y++)
+    const uint16_t colBody = 0xFA03; // Bright cute crab orange-red
+    const uint16_t colRim  = 0x78E2;
+
+    int stalkH = (int)(13.0f * peekRatio);
+    int eyeR = (peekRatio > 0.7f) ? 6 : 5;
+
+    // Two eye stalks side-by-side
+    int leftEyeX  = baseX + dir * 4 - 5;
+    int rightEyeX = baseX + dir * 4 + 6;
+    int eyeY      = baseY - stalkH;
+
+    spr.fillRect(leftEyeX - 1, eyeY, 3, stalkH + 2, colBody);
+    spr.fillRect(rightEyeX - 1, eyeY, 3, stalkH + 2, colBody);
+
+    // Twitching antennae
+    int antTipX1 = leftEyeX - 7 - (int)(lookX * 1.5f);
+    int antTipX2 = rightEyeX + 7 + (int)(lookX * 1.5f);
+    int antTipY  = eyeY - 6;
+    spr.drawLine(leftEyeX - 2, eyeY + 4, antTipX1, antTipY, colBody);
+    spr.drawLine(rightEyeX + 2, eyeY + 4, antTipX2, antTipY, colBody);
+
+    // Eyeballs
+    int ex[] = {leftEyeX, rightEyeX};
+    for (int i = 0; i < 2; i++)
     {
-        float dy = ((float)y - half) / half;
-        for (int x = 0; x < IRIS_TEX_SIZE; x++)
+        if (blinking)
         {
-            float dx = ((float)x - half) / half;
-            float r = sqrtf(dx * dx + dy * dy);
-            if (r > 1.0f)
-            {
-                irisTex[y * IRIS_TEX_SIZE + x] = 0x0000;
-                continue;
-            }
-
-            float angle = atan2f(dy, dx);
-            float twist = sinf(r * 6.5f) * 0.12f;
-            float a = angle + twist;
-
-            // Fine radial stroma trabeculae + deep anatomical Fuchs' crypts
-            float f1 = sinf(a * 36.0f + sinf(a * 7.0f) * 1.5f);
-            float f2 = cosf(a * 61.0f - r * 11.0f);
-            float f3 = sinf(a * 19.0f + cosf(r * 14.0f) * 1.3f);
-            float crypt = sinf(a * 13.0f + 0.9f) * sinf(r * 15.0f - 0.5f);
-
-            float fibre = constrain(0.50f + 0.25f * f1 + 0.15f * f2 + 0.10f * f3 - max(0.0f, crypt) * 0.30f, 0.0f, 1.0f);
-
-            // Rich deep ocean-sapphire to luminous cerulean-teal stroma
-            uint16_t col = blend565(0x014A, 0x573F, (uint8_t)(fibre * 255.0f));
-
-            // Jagged anatomical collarette ridge (r ~ 0.44 with star-like peaks)
-            float collarRadius = 0.44f + 0.045f * sinf(a * 14.0f) + 0.025f * cosf(a * 23.0f);
-            float collarDist = fabsf(r - collarRadius);
-            if (collarDist < 0.14f)
-            {
-                float collarAmt = (1.0f - collarDist / 0.14f) * (0.60f + 0.40f * f1);
-                col = blend565(col, 0xCC84, (uint8_t)constrain((int)(collarAmt * 210.0f), 0, 255));
-            }
-
-            // Subtle dark stromal furrow rings near outer iris
-            if (r > 0.65f && r < 0.82f)
-            {
-                float furrow = max(0.0f, sinf(r * 38.0f));
-                col = blend565(col, 0x00C6, (uint8_t)(furrow * 90.0f));
-            }
-
-            // Soft dark outer limbal ring
-            if (r > 0.79f)
-            {
-                float limbal = (r - 0.79f) / 0.21f;
-                col = blend565(col, 0x0042, (uint8_t)(limbal * 245.0f));
-            }
-
-            irisTex[y * IRIS_TEX_SIZE + x] = col;
-        }
-    }
-    irisTexReady = true;
-}
-
-void renderAndPushOneEye(int screenX, int screenY, float lookX, float lookY, float openness, float pupilScale, bool isLeftEye)
-{
-    if (!ensureEyeSprite())
-        return;
-    buildIrisTexture();
-
-    const int sprW = 152, sprH = 128;
-    const int cx = 76, cy = 64;
-    const int halfW = 60, maxUpperH = 29, maxLowerH = 22;
-
-    uint16_t *ptr = (uint16_t *)eyeSpr.getPointer();
-    if (!ptr)
-        return;
-
-    float lidTrack = constrain(1.0f - (lookY * 0.028f), 0.78f, 1.16f);
-    int upperH = (int)(maxUpperH * openness * lidTrack);
-    int lowerH = (int)(maxLowerH * openness * (1.0f + (lookY * 0.012f)));
-    int lidMeetY = cy + (int)((1.0f - openness) * 7.5f) + (int)(lookY * 0.25f);
-
-    // 1. Soft photographic skin vignette around the eye (eliminates the "floating in black void" look)
-    for (int y = 0; y < sprH; y++)
-    {
-        float ny = (float)(y - cy) * (1.0f / 64.0f);
-        float nySq = ny * ny;
-        // Fade smoothly to black at top/bottom sprite borders so there is never a hard box edge
-        float vMask = max(0.0f, 1.0f - nySq * nySq);
-        int rowOffset = y * sprW;
-
-        for (int x = 0; x < sprW; x++)
-        {
-            float nx = (float)(x - cx) * (1.0f / 76.0f);
-            float nxSq = nx * nx;
-            float hMask = max(0.0f, 1.0f - nxSq * nxSq);
-
-            // Orbital socket shadow + soft warm light on upper lid & lower cheekbone
-            float distFromLid = fabsf((float)(y - lidMeetY)) * (1.0f / 42.0f);
-            float browHighlight = max(0.0f, 1.0f - fabsf(ny + 0.58f) * 2.2f);
-            float cheekHighlight = max(0.0f, 1.0f - fabsf(ny - 0.52f) * 2.4f);
-            float skinLight = constrain((0.22f + browHighlight * 0.42f + cheekHighlight * 0.36f + distFromLid * 0.15f) * vMask * hMask, 0.0f, 1.0f);
-
-            // Subtle micro-grain so skin looks organic rather than plastic
-            int grain = ((x * 19 + y * 37) & 7) - 3;
-            uint8_t alpha = (uint8_t)constrain((int)(skinLight * 210.0f) + grain, 0, 255);
-
-            // Warm low-key skin tone (0x5227) blended seamlessly into black vignette
-            ptr[rowOffset + x] = swap16(blend565(0x0000, 0x6289, alpha));
-        }
-    }
-
-    // 2. Organic upper eyelid crease & soft lower-lid bag shadow
-    for (int dx = -halfW + 3; dx <= halfW - 3; dx++)
-    {
-        float nx = (float)dx * (1.0f / 60.0f);
-        float arch = 1.0f - nx * nx;
-        int creaseY = lidMeetY - (int)((upperH + 9) * arch);
-        for (int dy = -2; dy <= 2; dy++)
-        {
-            int py = creaseY + dy;
-            if (py >= 0 && py < sprH)
-            {
-                int idx = py * sprW + (cx + dx);
-                uint8_t shadowA = (uint8_t)((165 - abs(dy) * 55) * arch);
-                ptr[idx] = swap16(blend565(swap16(ptr[idx]), 0x18A2, shadowA));
-            }
-        }
-        int lowerBagY = lidMeetY + (int)((lowerH + 9) * arch);
-        if (lowerBagY >= 0 && lowerBagY < sprH)
-        {
-            int idx = lowerBagY * sprW + (cx + dx);
-            ptr[idx] = swap16(blend565(swap16(ptr[idx]), 0x20E3, (uint8_t)(arch * 110.0f)));
-        }
-    }
-
-    // 3. Spherical eyeball, recessed pupil refraction & lit fleshy lower lid rim
-    if (openness > 0.05f)
-    {
-        float irisX = (float)cx + lookX;
-        float irisY = (float)cy + lookY;
-        const float irisR = 23.5f, invIrisR = 1.0f / irisR;
-        const float pupilNorm = 0.37f * pupilScale;
-        float gazeSquashX = 1.0f + fabsf(lookX) * 0.010f;
-        float pupilShiftU = -lookX * 0.0055f;
-        float pupilShiftV = -lookY * 0.0055f;
-
-        for (int dx = -halfW; dx <= halfW; dx++)
-        {
-            float nx = (float)dx * (1.0f / 60.0f);
-            // Organic asymmetric human eyelid curve (peaks slightly toward inner-centre)
-            float peakShift = isLeftEye ? (nx + 0.14f) : (nx - 0.14f);
-            float upperArch = max(0.0f, 1.0f - peakShift * peakShift * 1.15f);
-            float lowerArch = max(0.0f, 1.0f - nx * nx);
-
-            float fTopY = (float)lidMeetY - (float)upperH * upperArch;
-            float fBotY = (float)lidMeetY + (float)lowerH * lowerArch;
-
-            int yStart = max(0, (int)floorf(fTopY) - 1);
-            int yEnd = min(sprH - 1, (int)ceilf(fBotY) + 3);
-
-            for (int y = yStart; y <= yEnd; y++)
-            {
-                int idx = y * sprW + (cx + dx);
-                uint16_t bgCol = swap16(ptr[idx]);
-
-                // Fleshy lower eyelid rim (tarsal margin) catching overhead light
-                float distBelowBot = (float)y - fBotY;
-                if (distBelowBot > 0.0f && distBelowBot <= 3.0f && fabsf(nx) < 0.92f)
-                {
-                    float rimFade = (1.0f - distBelowBot * 0.33f) * (1.0f - nx * nx * 0.4f);
-                    uint16_t rimCol = (distBelowBot < 1.1f) ? 0xCE59 : 0x834B; // Wet highlight edge + warm skin rim
-                    ptr[idx] = swap16(blend565(bgCol, rimCol, (uint8_t)(rimFade * 215.0f * openness)));
-                    continue;
-                }
-
-                float lidCov = min(constrain((float)y - fTopY + 0.5f, 0.0f, 1.0f),
-                                   constrain(fBotY - (float)y + 0.5f, 0.0f, 1.0f));
-                if (lidCov <= 0.01f)
-                    continue;
-
-                uint16_t pixelCol;
-                float innerDist = isLeftEye ? (float)(halfW - dx) : (float)(dx + halfW);
-
-                // Soft shaded inner corner (plica & caruncle)
-                if (innerDist < 9.5f && abs(y - (int)((fTopY + fBotY) * 0.5f)) <= 3)
-                {
-                    pixelCol = (innerDist > 6.5f) ? 0xB596 : 0x8C51;
-                }
-                else
-                {
-                    float u = ((float)(cx + dx) - irisX) * gazeSquashX * invIrisR;
-                    float v = ((float)y - irisY) * invIrisR;
-                    float rSq = u * u + v * v;
-
-                    // Deep upper-lid shadow gradient across the spherical sclera
-                    float distFromTop = (float)y - fTopY;
-                    float lidShadow = constrain(distFromTop * 0.095f, 0.28f, 1.0f);
-                    float sphereShade = constrain((1.0f - nx * nx * 0.35f) * lidShadow, 0.26f, 1.0f);
-                    uint16_t scleraCol = blend565(0x4228, 0xF7BE, (uint8_t)(sphereShade * 255.0f));
-
-                    if (rSq <= 1.08f)
-                    {
-                        float r = sqrtf(rSq);
-                        float pu = u - pupilShiftU;
-                        float pv = v - pupilShiftV;
-                        float pr = sqrtf(pu * pu + pv * pv);
-
-                        if (pr <= pupilNorm - 0.03f)
-                        {
-                            pixelCol = 0x0000;
-                        }
-                        else if (pr <= pupilNorm + 0.04f)
-                        {
-                            uint8_t pa = (uint8_t)(((pr - (pupilNorm - 0.03f)) / 0.07f) * 255.0f);
-                            pixelCol = blend565(0x0000, 0x9B42, pa);
-                        }
-                        else
-                        {
-                            uint16_t baseIris = sampleIrisBilinear(u, v);
-
-                            // Soft directional light caustic on lower-right iris bowl
-                            float caustic = constrain((u + v) * 0.25f, 0.0f, 0.35f);
-                            if (caustic > 0.01f)
-                            {
-                                baseIris = blend565(baseIris, 0x9F9F, (uint8_t)(caustic * 255.0f));
-                            }
-
-                            // Soft eyelash & upper-lid shadow cast across top third of iris
-                            baseIris = blend565(0x0021, baseIris, (uint8_t)(constrain(distFromTop * 0.105f, 0.18f, 1.0f) * 255.0f));
-
-                            pixelCol = (r > 0.92f)
-                                           ? blend565(scleraCol, baseIris, (uint8_t)(constrain((1.05f - r) * 7.69f, 0.0f, 1.0f) * 255.0f))
-                                           : baseIris;
-                        }
-                    }
-                    else
-                    {
-                        pixelCol = scleraCol;
-                    }
-                }
-
-                // Blend softly into dark lashline shadow along eyelid border
-                ptr[idx] = swap16((lidCov < 0.99f) ? blend565(0x18A2, pixelCol, (uint8_t)(lidCov * 255.0f)) : pixelCol);
-            }
-        }
-
-        // 4. Soft-edged studio window catchlight + subtle secondary glint
-        if (openness > 0.28f)
-        {
-            int hx = (int)(irisX - 7.0f - lookX * 0.16f);
-            int hy = (int)(irisY - 7.0f - lookY * 0.16f);
-            eyeSpr.fillCircle(hx, hy, 3, TFT_WHITE);
-            eyeSpr.fillCircle(hx + 3, hy - 2, 2, 0xEF7D);
-            eyeSpr.fillCircle(hx - 2, hy + 3, 2, 0xD71C);
-            // Eyelash shadow line cutting organically through top of catchlight
-            eyeSpr.drawLine(hx - 1, hy - 3, hx + 1, hy + 1, 0x2104);
-            eyeSpr.fillCircle((int)(irisX + 7.0f - lookX * 0.10f), (int)(irisY + 6.0f - lookY * 0.10f), 1, 0xB5F6);
-        }
-    }
-
-    // 5. Organic, slightly irregular upper & lower eyelashes (avoids uniform "comb" look)
-    for (int dx = -halfW; dx <= halfW; dx++)
-    {
-        float nx = (float)dx * (1.0f / 60.0f);
-        float peakShift = isLeftEye ? (nx + 0.14f) : (nx - 0.14f);
-        float upperArch = max(0.0f, 1.0f - peakShift * peakShift * 1.15f);
-        float lowerArch = max(0.0f, 1.0f - nx * nx);
-
-        int topY = (int)roundf((float)lidMeetY - (float)upperH * upperArch);
-        int botY = (int)roundf((float)lidMeetY + (float)lowerH * lowerArch);
-
-        if (topY >= 1 && topY < sprH)
-        {
-            int idx1 = topY * sprW + (cx + dx);
-            int idx2 = (topY - 1) * sprW + (cx + dx);
-            ptr[idx1] = swap16(blend565(swap16(ptr[idx1]), 0x1082, 220));
-            ptr[idx2] = swap16(blend565(swap16(ptr[idx2]), 0x2104, 150));
-        }
-
-        // Irregular organic lash clusters (varies spacing, length, and curl slightly per hair)
-        int hash = abs((dx * 17 + (isLeftEye ? 11 : 29)) % 13);
-        if (openness > 0.18f && (hash == 0 || hash == 4 || hash == 9) && abs(dx) < halfW - 3)
-        {
-            float side = isLeftEye ? -nx : nx;
-            int lenJitter = (hash == 4) ? 2 : ((hash == 9) ? -1 : 0);
-            int lashLen = max(4, (int)(7.0f + side * 5.0f) + lenJitter);
-            float curlX = side * 6.5f + ((hash == 0) ? 1.2f : -0.8f);
-
-            for (int s = 1; s <= lashLen; s++)
-            {
-                float t = (float)s / (float)lashLen;
-                float fx = (float)(cx + dx) + curlX * t * t;
-                int ix = (int)floorf(fx);
-                float frac = fx - (float)ix;
-                int ly = topY - 1 - s;
-                if (ly < 0 || ix < 0 || ix + 1 >= sprW)
-                    break;
-
-                uint8_t alpha = (uint8_t)((1.0f - t * 0.75f) * 235.0f);
-                int lidx = ly * sprW + ix;
-                ptr[lidx] = swap16(blend565(swap16(ptr[lidx]), 0x1082, (uint8_t)(alpha * (1.0f - frac))));
-                ptr[lidx + 1] = swap16(blend565(swap16(ptr[lidx + 1]), 0x1082, (uint8_t)(alpha * frac)));
-            }
-        }
-
-        // Sparse, natural lower lashes
-        int lowHash = abs((dx * 23 + (isLeftEye ? 7 : 19)) % 17);
-        if (openness > 0.45f && (lowHash == 2 || lowHash == 11) && abs(dx) < halfW - 9)
-        {
-            float side = isLeftEye ? -nx : nx;
-            int curlX = (int)(side * 2.5f);
-            for (int s = 1; s <= 3; s++)
-            {
-                int ly = botY + 2 + s;
-                int lx = cx + dx + (curlX * s) / 3;
-                if (ly < sprH && lx >= 0 && lx < sprW)
-                {
-                    int lidx = ly * sprW + lx;
-                    ptr[lidx] = swap16(blend565(swap16(ptr[lidx]), 0x2945, (uint8_t)(165 - s * 40)));
-                }
-            }
-        }
-    }
-    eyeSpr.pushSprite(screenX, screenY);
-}
-void drawEyePair(float openness, float pupilOffsetX, float pupilOffsetY, float pupilScale, int driftX = 0, int driftY = 0)
-{
-    int leftX = constrain(8 + driftX, 0, 168);
-    int rightX = constrain(160 + driftX, 0, 168);
-    int posY = constrain(56 + driftY, 0, 112);
-
-    renderAndPushOneEye(leftX, posY, pupilOffsetX, pupilOffsetY, openness, pupilScale, true);
-    renderAndPushOneEye(rightX, posY, pupilOffsetX, pupilOffsetY, openness, pupilScale, false);
-}
-
-void updateScreenSaverEyes(bool forceInit = false)
-{
-    static unsigned long nextActionMs = 0;
-    static unsigned long lastMicroMs = 0;
-    static int blinkStep = 0;
-    static bool doubleBlink = false;
-    static float curX = 0.0f, curY = 0.0f;
-    static float tgtX = 0.0f, tgtY = 0.0f;
-    static float curPupil = 1.0f, tgtPupil = 1.0f;
-    static float squintFactor = 1.0f, tgtSquint = 1.0f;
-    static int lastDriftX = 0, lastDriftY = 0;
-
-    const float blinkCurve[] = {1.0f, 0.45f, 0.0f, 0.28f, 0.65f, 0.90f};
-    unsigned long now = millis();
-
-    // Compute slow Lissajous burn-in drift across the 320x240 display
-    float tSec = (float)now * 0.001f;
-    int driftX = (int)roundf(sinf(tSec * 0.17f) * 8.0f);  // ±8px horizontal drift
-    int driftY = (int)roundf(cosf(tSec * 0.11f) * 48.0f); // ±48px vertical drift
-
-    if (forceInit)
-    {
-        tft.fillScreen(TFT_BLACK);
-        blinkStep = 0;
-        doubleBlink = false;
-        curX = curY = tgtX = tgtY = 0.0f;
-        curPupil = tgtPupil = 1.0f;
-        squintFactor = tgtSquint = 1.0f;
-        lastDriftX = driftX;
-        lastDriftY = driftY;
-        drawEyePair(1.0f, 0.0f, 0.0f, 1.0f, driftX, driftY);
-        nextActionMs = now + random(1600, 3200);
-        lastMicroMs = now;
-        return;
-    }
-
-    // Clear thin 2px edge strips whenever the sprite shifts position to prevent trails
-    if (driftX != lastDriftX || driftY != lastDriftY)
-    {
-        int oldLeftX = constrain(8 + lastDriftX, 0, 168);
-        int oldRightX = constrain(160 + lastDriftX, 0, 168);
-        int oldPosY = constrain(56 + lastDriftY, 0, 112);
-        int newLeftX = constrain(8 + driftX, 0, 168);
-        int newRightX = constrain(160 + driftX, 0, 168);
-        int newPosY = constrain(56 + driftY, 0, 112);
-
-        if (newPosY > oldPosY)
-        {
-            tft.fillRect(0, oldPosY, 320, newPosY - oldPosY, TFT_BLACK);
-        }
-        else if (newPosY < oldPosY)
-        {
-            tft.fillRect(0, newPosY + 128, 320, oldPosY - newPosY, TFT_BLACK);
-        }
-        if (newLeftX > oldLeftX)
-        {
-            tft.fillRect(oldLeftX, oldPosY, newLeftX - oldLeftX, 128, TFT_BLACK);
-            tft.fillRect(oldRightX, oldPosY, newRightX - oldRightX, 128, TFT_BLACK);
-        }
-        else if (newLeftX < oldLeftX)
-        {
-            tft.fillRect(newLeftX + 152, oldPosY, oldLeftX - newLeftX, 128, TFT_BLACK);
-            tft.fillRect(newRightX + 152, oldPosY, oldRightX - newRightX, 128, TFT_BLACK);
-        }
-
-        lastDriftX = driftX;
-        lastDriftY = driftY;
-    }
-
-    // Smooth saccadic gaze glide + subtle squint & pupil transitions
-    bool needsRedraw = false;
-    if (fabsf(tgtX - curX) > 0.20f || fabsf(tgtY - curY) > 0.20f)
-    {
-        curX += (tgtX - curX) * 0.48f;
-        curY += (tgtY - curY) * 0.48f;
-        if (fabsf(tgtX - curX) <= 0.20f)
-            curX = tgtX;
-        if (fabsf(tgtY - curY) <= 0.20f)
-            curY = tgtY;
-        needsRedraw = true;
-    }
-    if (fabsf(tgtPupil - curPupil) > 0.008f || fabsf(tgtSquint - squintFactor) > 0.01f)
-    {
-        curPupil += (tgtPupil - curPupil) * 0.22f;
-        squintFactor += (tgtSquint - squintFactor) * 0.20f;
-        needsRedraw = true;
-    }
-
-    // Subtle living ocular micro-drift & pupil breathing every ~90ms
-    float microX = 0.0f, microY = 0.0f, breathPupil = 0.0f;
-    if (blinkStep == 0 && (now - lastMicroMs >= 90))
-    {
-        lastMicroMs = now;
-        microX = sinf(tSec * 2.1f) * 0.45f;
-        microY = cosf(tSec * 1.7f) * 0.30f;
-        breathPupil = sinf(tSec * 1.4f) * 0.035f;
-        needsRedraw = true;
-    }
-
-    if (needsRedraw && blinkStep == 0)
-    {
-        drawEyePair(squintFactor, curX + microX, curY + microY, curPupil + breathPupil, driftX, driftY);
-    }
-
-    if (now >= nextActionMs)
-    {
-        if (blinkStep == 0)
-        {
-            int roll = random(10);
-            if (roll < 5)
-            {
-                blinkStep = 1;
-                doubleBlink = (random(4) == 0);
-                drawEyePair(blinkCurve[blinkStep] * squintFactor, curX, curY, curPupil, driftX, driftY);
-                nextActionMs = now + 22;
-            }
-            else if (roll < 8)
-            {
-                tgtX = (float)random(-17, 18);
-                tgtY = (float)random(-6, 6);
-                tgtPupil = 0.86f + (float)random(0, 28) * 0.01f;
-                tgtSquint = (random(4) == 0) ? 0.84f : 1.0f;
-                nextActionMs = now + random(1400, 3200);
-            }
-            else
-            {
-                tgtX = 0.0f;
-                tgtY = 0.0f;
-                tgtPupil = 1.0f;
-                tgtSquint = 1.0f;
-                nextActionMs = now + random(2000, 4200);
-            }
+            spr.fillCircle(ex[i], eyeY, eyeR, colBody);
+            spr.drawCircle(ex[i], eyeY, eyeR, colRim);
+            spr.drawFastHLine(ex[i] - eyeR + 1, eyeY, (eyeR * 2) - 2, colRim);
         }
         else
         {
-            blinkStep++;
-            if (blinkStep >= 6)
-            {
-                blinkStep = 0;
-                drawEyePair(squintFactor, curX, curY, curPupil, driftX, driftY);
-                if (doubleBlink)
-                {
-                    doubleBlink = false;
-                    nextActionMs = now + 120;
-                }
-                else
-                {
-                    nextActionMs = now + random(2200, 5000);
-                }
-            }
-            else
-            {
-                drawEyePair(blinkCurve[blinkStep] * squintFactor, curX, curY, curPupil, driftX, driftY);
-                nextActionMs = now + (blinkStep == 2 ? 55 : 24);
-            }
+            spr.fillCircle(ex[i], eyeY, eyeR, TFT_WHITE);
+            spr.drawCircle(ex[i], eyeY, eyeR, colRim);
+
+            int px = ex[i] + (int)constrain(lookX, -2.0f, 2.0f);
+            int py = eyeY + (int)constrain(lookY, -2.0f, 2.0f);
+            spr.fillCircle(px, py, 3, TFT_BLACK);
+            spr.fillCircle(px - 1, py - 1, 1, TFT_WHITE);
         }
     }
+}
+
+// Render a complete frame of the hermit crab in its current state
+static void renderHermitCrabFrame(float timeSec, int driftOffset)
+{
+    if (!ensureCrabSprite())
+        return;
+
+    drawBeachBackground(crabSpr, timeSec, driftOffset);
+
+    int cx = (int)roundf(crabX);
+    int groundY = 96; // Sand contact line inside sprite
+
+    // Soft ground shadow beneath the crab
+    int shadowW = (crabState == CRAB_WALKING) ? 34 : 28;
+    crabSpr.fillEllipse(cx, groundY + 4, shadowW, 5, 0xA365);
+
+    const uint16_t colCrab      = 0xFA03; // Bright cheerful orange-red
+    const uint16_t colCrabLight = 0xFC86; // Warm claw/face highlight
+    const uint16_t colCrabDark  = 0xB181; // Back leg shading
+    const uint16_t colRim       = 0x78E2;
+
+    if (crabState == CRAB_WALKING)
+    {
+        int bodyY = groundY - 12;
+
+        // 1. Animated walking legs (4 visible legs scuttling in alternating pairs)
+        for (int i = 0; i < 4; i++)
+        {
+            float legPhase = walkPhase + (i * 1.57f);
+            int strideX = (int)(sinf(legPhase) * 5.0f);
+            int liftY   = (int)(max(0.0f, -cosf(legPhase)) * 4.0f);
+
+            int hipX  = cx + crabDir * (2 + i * 4) - crabDir * 6;
+            int hipY  = bodyY + 4;
+            int kneeX = hipX + crabDir * 5 + strideX / 2;
+            int kneeY = hipY + 5 - liftY / 2;
+            int footX = hipX + crabDir * 8 + strideX;
+            int footY = groundY + 2 - liftY;
+
+            uint16_t lCol = (i % 2 == 0) ? colCrab : colCrabDark;
+            crabSpr.drawLine(hipX, hipY, kneeX, kneeY, lCol);
+            crabSpr.drawLine(hipX + 1, hipY, kneeX + 1, kneeY, lCol);
+            crabSpr.drawLine(kneeX, kneeY, footX, footY, lCol);
+            crabSpr.drawLine(kneeX + 1, kneeY, footX + 1, footY, lCol);
+        }
+
+        // 2. Gorgeous spiral shell on its back
+        drawGorgeousShell(crabSpr, cx - crabDir * 4, bodyY - 8, crabDir, walkPhase * 0.5f);
+
+        // 3. Cute crab head/face peeking out of the shell aperture
+        int headX = cx + crabDir * 14;
+        int headY = bodyY + 1;
+        crabSpr.fillEllipse(headX, headY, 9, 7, colCrab);
+        crabSpr.drawEllipse(headX, headY, 9, 7, colRim);
+
+        // Cute tiny smile & rosy cheeks
+        crabSpr.fillCircle(headX + crabDir * 4, headY + 2, 2, 0xFBAE);
+        crabSpr.drawPixel(headX + crabDir * 2, headY + 3, colRim);
+        crabSpr.drawPixel(headX + crabDir * 3, headY + 4, colRim);
+        crabSpr.drawPixel(headX + crabDir * 4, headY + 3, colRim);
+
+        // 4. Cute front pincer claw
+        int clawWave = (int)(sinf(walkPhase * 0.7f) * 2.0f);
+        int bigClawX = headX + crabDir * 11;
+        int bigClawY = headY + 3 + clawWave;
+        crabSpr.fillEllipse(bigClawX, bigClawY, 7, 5, colCrabLight);
+        crabSpr.drawEllipse(bigClawX, bigClawY, 7, 5, colRim);
+        crabSpr.drawLine(bigClawX + crabDir * 2, bigClawY, bigClawX + crabDir * 7, bigClawY - 1, colRim);
+
+        // 5. Bobbing eye stalks & blinking
+        bool blink = ((int)(timeSec * 10.0f) % 37 == 0);
+        drawCrabEyesAndAntennae(crabSpr, headX, headY - 4, crabDir, (float)crabDir * 1.5f, 0.0f, blink, 1.0f);
+    }
+    else
+    {
+        // HIDING OR PEEKING STATE: Shell rests snug on the sand
+        int shellY = groundY - 6;
+        drawGorgeousShell(crabSpr, cx - crabDir * 2, shellY, crabDir, 0.0f);
+
+        // Tucked-in orange claw tip blocking the shell entrance
+        int plugX = cx + crabDir * 12;
+        int plugY = shellY + 4;
+        crabSpr.fillEllipse(plugX, plugY, 6, 4, colCrabLight);
+        crabSpr.drawEllipse(plugX, plugY, 6, 4, colRim);
+
+        if (crabState == CRAB_PEEKING)
+        {
+            unsigned long peekElapsed = millis() - stateStartedMs;
+            float peekRatio = constrain((float)peekElapsed / 450.0f, 0.0f, 1.0f);
+
+            // Nervous look-around: look left, look right, blink twice!
+            float lookSeq = sinf((float)peekElapsed * 0.0045f) * 2.2f;
+            bool blink1 = (peekElapsed > 650 && peekElapsed < 820);
+            bool blink2 = (peekElapsed > 1850 && peekElapsed < 2020);
+
+            drawCrabEyesAndAntennae(crabSpr, plugX - crabDir * 2, plugY - 3, crabDir,
+                                    lookSeq, -0.5f, (blink1 || blink2), peekRatio);
+        }
+    }
+
+    crabSpr.pushSprite(0, BAND_Y);
+}
+
+// Called when the user taps the screen while the screensaver is active.
+// Returns true if the screensaver should EXIT (second tap while hiding/peeking),
+// or false if the crab was startled into hiding (first tap).
+bool handleScreenSaverTap()
+{
+    unsigned long now = millis();
+
+    if (crabState == CRAB_WALKING)
+    {
+        crabState = CRAB_HIDING_FULL;
+        stateStartedMs = now;
+        return false; // Stay in screensaver
+    }
+    else
+    {
+        crabState = CRAB_WALKING;
+        return true; // Wake up!
+    }
+}
+
+// Main screensaver update loop (keeps existing signature for google-ai-main.cpp)
+void updateScreenSaverEyes(bool forceInit = false)
+{
+    static unsigned long lastFrameMs = 0;
+    static int lastDriftOffset = 999;
+
+    unsigned long now = millis();
+    float timeSec = (float)now * 0.001f;
+
+    // Slow horizontal burn-in drift for background stars & sand pebbles
+    int driftOffset = (int)roundf(sinf(timeSec * 0.08f) * 14.0f);
+
+    if (forceInit)
+    {
+        crabState = CRAB_WALKING;
+        stateStartedMs = now;
+        crabX = 160.0f;
+        crabDir = 1;
+        walkPhase = 0.0f;
+        lastDriftOffset = driftOffset;
+        drawStaticBeachSky(driftOffset);
+        renderHermitCrabFrame(timeSec, driftOffset);
+        lastFrameMs = now;
+        return;
+    }
+
+    // Update sky stars only when drift offset shifts by a pixel
+    if (driftOffset != lastDriftOffset)
+    {
+        lastDriftOffset = driftOffset;
+        drawStaticBeachSky(driftOffset);
+    }
+
+    // Cap animation at ~25 FPS (40ms per frame)
+    if (now - lastFrameMs < 40)
+        return;
+    lastFrameMs = now;
+
+    unsigned long inStateMs = now - stateStartedMs;
+
+    if (crabState == CRAB_WALKING)
+    {
+        crabX += (float)crabDir * 1.35f;
+        walkPhase += 0.28f;
+
+        if (crabX >= 262.0f)
+        {
+            crabX = 262.0f;
+            crabDir = -1;
+        }
+        else if (crabX <= 58.0f)
+        {
+            crabX = 58.0f;
+            crabDir = 1;
+        }
+    }
+    else if (crabState == CRAB_HIDING_FULL)
+    {
+        // Stay completely tucked inside shell for 1.2s, then start peeking
+        if (inStateMs >= 1200UL)
+        {
+            crabState = CRAB_PEEKING;
+            stateStartedMs = now;
+        }
+    }
+    else if (crabState == CRAB_PEEKING)
+    {
+        // Peek and look around for 3.8s (1.2s hide + 3.8s peek = 5.0s total)
+        if (inStateMs >= 3800UL)
+        {
+            crabState = CRAB_WALKING;
+            stateStartedMs = now;
+        }
+    }
+
+    renderHermitCrabFrame(timeSec, driftOffset);
 }
