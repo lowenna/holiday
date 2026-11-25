@@ -481,7 +481,7 @@ void drawOtaProgressScreen(const char *statusText, int percent)
     tft.fillRect(0, 0, SCREEN_W, 26, TFT_NAVY);
     tft.setTextColor(TFT_WHITE, TFT_NAVY);
     tft.setTextDatum(MC_DATUM);
-    tft.drawString("SOFTWARE UPDATE", SCREEN_W / 2, 13, 2);
+    tft.drawString("UPDATE", SCREEN_W / 2, 13, 2);
   }
 
   tft.setTextDatum(MC_DATUM);
@@ -1203,7 +1203,7 @@ void showWebUpdateInfoScreen(bool mdnsOk)
   tft.drawFastHLine(0, 24, SCREEN_W, TFT_CYAN);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_WHITE, TFT_NAVY);
-  tft.drawString("Software Update", SCREEN_W / 2, 12, 2);
+  tft.drawString("Settings & Update", SCREEN_W / 2, 12, 2);
 
   // Instruction & URL Card
   tft.drawRoundRect(10, 34, SCREEN_W - 20, 134, 8, TFT_DARKCYAN);
@@ -1310,7 +1310,7 @@ void drawConfigScreenBase(int16_t col1X, int16_t col2X, int16_t tileW,
   tft.drawFastHLine(0, 24, SCREEN_W, TFT_CYAN);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_WHITE, TFT_NAVY);
-  tft.drawString("Settings & Options", SCREEN_W / 2, 12, 2);
+  tft.drawString("Options", SCREEN_W / 2, 12, 2);
   tft.setTextDatum(TL_DATUM);
 
   // 2. Toggle Tiles (y = 32..166)
@@ -1674,8 +1674,8 @@ void drawBootWelcomeScreen(const String &savedSsid)
   }
 
   tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(TFT_DARKCYAN, TFT_BLACK);
-  tft.drawString("Hold screen to open Settings on boot", SCREEN_W / 2, 222, 1);
+  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+  tft.drawString("Hold for Settings & Options", SCREEN_W / 2, 222, 1);
   tft.setTextDatum(TL_DATUM);
 }
 
