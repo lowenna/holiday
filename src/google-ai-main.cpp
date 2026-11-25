@@ -613,14 +613,25 @@ bool setupOTA()
 
 void drawOtaProgressScreen(const char *statusText, int percent)
 {
+  static String lastStatus = "";
+  const int16_t barW = 264;
+  const int16_t barH = 22;
+  const int16_t barX = (SCREEN_W - barW) / 2;
+  const int16_t barY = 96;
+
   if (!otaInProgress)
   {
     otaInProgress = true;
+    lastStatus = "";
     drawModernHeader("Firmware Update");
 
     // Elevated dark-slate progress card (y = 40..186)
     tft.fillRoundRect(10, 40, SCREEN_W - 20, 146, 8, UI_CARD);
     tft.drawRoundRect(10, 40, SCREEN_W - 20, 146, 8, UI_ACCENT_DK);
+
+    // Draw progress bar track ONCE so it never flickers on updates
+    tft.fillRoundRect(barX, barY, barW, barH, 6, UI_CARD_ALT);
+    tft.drawRoundRect(barX, barY, barW, barH, 6, UI_BORDER);
 
     // Bottom divider & safety notice matching other screens
     tft.drawFastHLine(10, 194, SCREEN_W - 20, UI_BORDER);
@@ -633,20 +644,18 @@ void drawOtaProgressScreen(const char *statusText, int percent)
   tft.setFreeFont(nullptr);
   tft.setTextDatum(MC_DATUM);
 
-  // Status label inside card
-  tft.fillRect(18, 54, SCREEN_W - 36, 24, UI_CARD);
-  tft.setTextColor(UI_ACCENT, UI_CARD);
-  tft.drawString(statusText, SCREEN_W / 2, 66, 2);
+  // Only redraw status text if the message changed
+  String curStatus = String(statusText);
+  if (curStatus != lastStatus)
+  {
+    lastStatus = curStatus;
+    tft.setTextPadding(SCREEN_W - 40);
+    tft.setTextColor(UI_ACCENT, UI_CARD);
+    tft.drawString(curStatus, SCREEN_W / 2, 66, 2);
+    tft.setTextPadding(0);
+  }
 
-  // Rounded Progress Bar inside card
-  const int16_t barW = 264;
-  const int16_t barH = 22;
-  const int16_t barX = (SCREEN_W - barW) / 2;
-  const int16_t barY = 96;
-
-  tft.fillRoundRect(barX, barY, barW, barH, 6, UI_CARD_ALT);
-  tft.drawRoundRect(barX, barY, barW, barH, 6, UI_BORDER);
-
+  // Grow green progress fill smoothly without erasing the track
   int clampedPct = constrain(percent, 0, 100);
   int fillW = map(clampedPct, 0, 100, 0, barW - 4);
   if (fillW > 4)
@@ -654,11 +663,12 @@ void drawOtaProgressScreen(const char *statusText, int percent)
     tft.fillRoundRect(barX + 2, barY + 2, fillW, barH - 4, 4, UI_SUCCESS);
   }
 
-  // Percentage readout inside card
+  // Overwrite percentage readout in-place using text padding (zero black flash)
   String pctStr = String(clampedPct) + "%";
-  tft.fillRect(90, 132, 140, 32, UI_CARD);
+  tft.setTextPadding(120);
   tft.setTextColor(TFT_WHITE, UI_CARD);
   tft.drawString(pctStr, SCREEN_W / 2, 148, 4);
+  tft.setTextPadding(0);
   tft.setTextDatum(TL_DATUM);
 }
 
@@ -1783,6 +1793,8 @@ void drawBootClockIcon(int cx, int cy, uint16_t col)
 
 void updateBootStepRow(int rowIndex, BootStepState state, const String &line1, const String &line2 = "")
 {
+  static BootStepState lastState[2] = {(BootStepState)-1, (BootStepState)-1};
+
   const int16_t cardX = 10;
   const int16_t cardW = SCREEN_W - 20;
   const int16_t cardH = 66;
@@ -1790,6 +1802,7 @@ void updateBootStepRow(int rowIndex, BootStepState state, const String &line1, c
   const int16_t rowCenterY = cardY + (cardH / 2);
   const int16_t iconX = 44;
   const int16_t textX = 78;
+  const int16_t maxTextW = (cardX + cardW) - textX - 10;
 
   uint16_t cardBorder = 0x39E7; // UI_BORDER
   uint16_t iconCol    = 0x9CD3; // UI_TEXT_MUTED
@@ -1818,23 +1831,31 @@ void updateBootStepRow(int rowIndex, BootStepState state, const String &line1, c
     subCol     = TFT_WHITE;
   }
 
-  // Draw or refresh the elevated dark-slate card
-  tft.fillRoundRect(cardX, cardY, cardW, cardH, 8, 0x18E3); // UI_CARD
-  tft.drawRoundRect(cardX, cardY, cardW, cardH, 8, cardBorder);
+  // Only redraw the card background & icon when the row's state changes
+  if (rowIndex < 0 || rowIndex > 1 || lastState[rowIndex] != state)
+  {
+    if (rowIndex >= 0 && rowIndex <= 1)
+    {
+      lastState[rowIndex] = state;
+    }
+    tft.fillRoundRect(cardX, cardY, cardW, cardH, 8, 0x18E3); // UI_CARD
+    tft.drawRoundRect(cardX, cardY, cardW, cardH, 8, cardBorder);
 
-  if (rowIndex == 0)
-  {
-    drawBootWifiIcon(iconX, rowCenterY, iconCol);
-  }
-  else
-  {
-    drawBootClockIcon(iconX, rowCenterY, iconCol);
+    if (rowIndex == 0)
+    {
+      drawBootWifiIcon(iconX, rowCenterY, iconCol);
+    }
+    else
+    {
+      drawBootClockIcon(iconX, rowCenterY, iconCol);
+    }
   }
 
   tft.setFreeFont(nullptr);
   tft.setTextFont(2);
   tft.setTextSize(1);
   tft.setTextDatum(TL_DATUM);
+  tft.setTextPadding(maxTextW);
 
   if (line2.length() > 0)
   {
@@ -1848,6 +1869,8 @@ void updateBootStepRow(int rowIndex, BootStepState state, const String &line1, c
     tft.setTextColor(titleCol, 0x18E3);
     tft.drawString(line1, textX, rowCenterY - 8, 2);
   }
+
+  tft.setTextPadding(0);
 }
 
 void drawBootWelcomeScreen(const String &savedSsid)
