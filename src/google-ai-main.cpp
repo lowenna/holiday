@@ -2254,30 +2254,33 @@ void setup()
   wifiManager.addParameter(&custom_hol_year);
   wifiManager.addParameter(&custom_hol_where);
 
-  // 5. Connect to saved Wi-Fi, or start non-blocking AP named "holiday-xxxx"
+    // 5. Connect to saved Wi-Fi (12s timeout), or start non-blocking AP named "holiday-xxxx"
+  wifiManager.setConnectTimeout(12);
+  wifiManager.setConnectRetries(2);
   bool wifiConnected = wifiManager.autoConnect(otaHostname);
+
   if (!wifiConnected)
   {
-    // If WiFiManager entered AP config mode (e.g., wrong password or new network),
-    // stay in the non-blocking setup portal with live 10-minute countdown!
-    if (wifiManager.getConfigPortalActive())
-    {
-      bool portalCancelled = false;
-      bool timedOut = runNonBlockingPortal(wifiManager, 600000UL, &portalCancelled);
-      wifiConnected = (WiFi.status() == WL_CONNECTED);
+    Serial.println("Saved Wi-Fi failed; starting setup hotspot...");
+    WiFi.disconnect(true);
+    delay(200);
+    WiFi.mode(WIFI_AP_STA);
 
-      if (!wifiConnected)
-      {
-        showScreenError("WI-FI ERROR",
-                        timedOut ? "Setup portal timed out.\nRestarting in 5 seconds..."
-                                 : "Wi-Fi setup cancelled.\nRestarting in 5 seconds...",
-                        true, 5000);
-        ESP.restart();
-      }
-    }
-    else
+    if (!wifiManager.getConfigPortalActive())
     {
-      showScreenError("WI-FI ERROR", "Failed to connect to Wi-Fi.\nRestarting in 5 seconds...", true, 5000);
+      wifiManager.startConfigPortal(otaHostname);
+    }
+
+    bool portalCancelled = false;
+    bool timedOut = runNonBlockingPortal(wifiManager, 600000UL, &portalCancelled);
+    wifiConnected = (WiFi.status() == WL_CONNECTED);
+
+    if (!wifiConnected)
+    {
+      showScreenError("WI-FI ERROR",
+                      timedOut ? "Setup portal timed out.\nRestarting in 5 seconds..."
+                               : "Wi-Fi setup cancelled.\nRestarting in 5 seconds...",
+                      true, 5000);
       ESP.restart();
     }
   }
