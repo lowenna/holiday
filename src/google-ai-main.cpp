@@ -1070,8 +1070,6 @@ void initSprites()
   countdownFgSprite.setSwapBytes(true);
 }
 
-
-
 bool gMdnsOk = false;
 
 void drawModernHeader(const char *title, const char *badgeText)
