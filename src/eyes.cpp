@@ -3,13 +3,13 @@
 extern TFT_eSPI tft;
 
 // ============================================================================
-// Cute Hermit Crab Beach Screensaver (Replaces Blinking Eyes)
+// Cute Hermit Crab Beach Screensaver
 // ============================================================================
 
 constexpr int16_t CRAB_SCR_W = 320;
 constexpr int16_t CRAB_SCR_H = 240;
 constexpr int16_t BAND_Y = 96;      // Top of active animation band (y = 96..239)
-constexpr int16_t BAND_H = 144;     // 320x144x16-bit sprite = ~92 KB
+constexpr int16_t BAND_H = 144;     // 320x144x8-bit sprite = ~46 KB
 
 static TFT_eSprite crabSpr(&tft);
 static bool crabSprReady = false;
@@ -31,7 +31,7 @@ static bool ensureCrabSprite()
 {
     if (!crabSprReady)
     {
-        crabSpr.setColorDepth(8); // 320x144x8-bit = ~46 KB (fixes sprite allocation failure)
+        crabSpr.setColorDepth(8);
         if (crabSpr.createSprite(CRAB_SCR_W, BAND_H) == nullptr)
         {
             Serial.println("[CRAB] Failed to allocate 320x144 sprite!");
@@ -42,19 +42,32 @@ static bool ensureCrabSprite()
     return true;
 }
 
-// Draw static night-beach sky + gentle stars above the active band (y = 0..95)
+// Draw realistic moonlit tropical night sky above the active band (y = 0..95)
 static void drawStaticBeachSky(int driftOffset)
 {
-    tft.fillRect(0, 0, CRAB_SCR_W, BAND_Y, TFT_BLACK);
+    // Deep indigo-to-twilight vertical gradient
+    tft.fillRect(0, 0, CRAB_SCR_W, 48, TFT_BLACK);
+    tft.fillRect(0, 48, CRAB_SCR_W, 20, 0x0043); // Midnight blue
+    tft.fillRect(0, 68, CRAB_SCR_W, 14, 0x0085); // Deep horizon blue
+    tft.fillRect(0, 82, CRAB_SCR_W, 8, 0x0108);  // Twilight glow
+    tft.fillRect(0, 90, CRAB_SCR_W, 6, 0x018B);  // Horizon mist
 
-    // Subtle deep-twilight horizon glow near y = 80..95
-    tft.fillRect(0, 82, CRAB_SCR_W, 8, 0x0084);
-    tft.fillRect(0, 90, CRAB_SCR_W, 6, 0x0107);
+    // Soft glowing crescent moon on upper-right
+    int moonX = 258 + (driftOffset / 2);
+    int moonY = 30;
+    tft.fillCircle(moonX, moonY, 15, 0x2126);     // Faint outer halo
+    tft.fillCircle(moonX, moonY, 11, 0xFFDF);     // Warm pearl moon
+    tft.fillCircle(moonX - 5, moonY - 3, 10, TFT_BLACK); // Crescent cutout
+
+    // Subtle distant horizon clouds
+    int cloudX = (65 + driftOffset + CRAB_SCR_W) % CRAB_SCR_W;
+    tft.fillRoundRect(cloudX, 58, 44, 6, 3, 0x08A6);
+    tft.fillRoundRect(cloudX + 10, 54, 24, 6, 3, 0x10E8);
 
     // Twinkling stars with slow burn-in drift
-    const int starX[] = {28, 74, 118, 165, 212, 258, 296, 48, 142, 238, 190, 95};
-    const int starY[] = {16, 34, 14, 28, 18, 38, 20, 56, 48, 54, 66, 68};
-    const uint16_t starCol[] = {TFT_WHITE, TFT_CYAN, TFT_YELLOW, TFT_SILVER};
+    const int starX[] = {24, 72, 116, 158, 198, 294, 44, 138, 218, 182, 92, 282};
+    const int starY[] = {14, 30, 12, 24, 16, 18, 46, 40, 52, 60, 64, 62};
+    const uint16_t starCol[] = {TFT_WHITE, 0xB7FF, 0xFFE8, TFT_SILVER};
 
     for (int i = 0; i < 12; i++)
     {
@@ -64,59 +77,90 @@ static void drawStaticBeachSky(int driftOffset)
         tft.drawPixel(sx, sy, col);
         if (i % 3 == 0)
         {
-            tft.drawPixel(sx - 1, sy, TFT_DARKGREY);
-            tft.drawPixel(sx + 1, sy, TFT_DARKGREY);
-            tft.drawPixel(sx, sy - 1, TFT_DARKGREY);
-            tft.drawPixel(sx, sy + 1, TFT_DARKGREY);
+            tft.drawPixel(sx - 1, sy, 0x39E7);
+            tft.drawPixel(sx + 1, sy, 0x39E7);
+            tft.drawPixel(sx, sy - 1, 0x39E7);
+            tft.drawPixel(sx, sy + 1, 0x39E7);
         }
     }
 }
 
-// Draw beach water edge & warm golden sand inside the sprite (local y = 0..143)
+// Draw layered lagoon, rolling surf foam & textured tropical sand (local y = 0..143)
 static void drawBeachBackground(TFT_eSprite &spr, float timeSec, int driftOffset)
 {
-    // 1. Calm moonlit ocean strip at top of band (local y = 0..26)
-    spr.fillRect(0, 0, CRAB_SCR_W, 18, 0x018B);  // Deep lagoon blue
-    spr.fillRect(0, 18, CRAB_SCR_W, 8, 0x02B0);  // Shallow turquoise
+    // 1. Layered tropical ocean strip (local y = 0..28)
+    spr.fillRect(0, 0, CRAB_SCR_W, 10, 0x0149);  // Deep lagoon navy
+    spr.fillRect(0, 10, CRAB_SCR_W, 9, 0x024E);  // Mid lagoon teal
+    spr.fillRect(0, 19, CRAB_SCR_W, 8, 0x0393);  // Shallow luminous turquoise
 
-    // Gentle animated wave foam line (local y = 26..30)
-    int foamShift = (int)(sinf(timeSec * 1.6f) * 3.0f);
-    spr.fillRect(0, 26 + foamShift, CRAB_SCR_W, 3, 0x9F7F); // Soft seafoam
+    // Shimmering moonlight reflections on the water beneath the moon
+    int moonRefX = 258 + (driftOffset / 2);
+    for (int r = 0; r < 5; r++)
+    {
+        int shimW = 14 - (r * 2) + (int)(sinf(timeSec * 3.0f + r) * 3.0f);
+        int shimX = moonRefX - (shimW / 2) + (int)(cosf(timeSec * 2.2f + r) * 2.0f);
+        spr.drawFastHLine(shimX, 3 + (r * 4), max(2, shimW), 0xB7FF);
+    }
 
-    // 2. Wet sand & warm golden beach sand (local y = 29..143)
-    spr.fillRect(0, 29 + foamShift, CRAB_SCR_W, 12, 0x9B86); // Wet darker sand
-    spr.fillRect(0, 41 + foamShift, CRAB_SCR_W, BAND_H - (41 + foamShift), 0xE58B); // Warm golden sand
-    spr.fillRect(0, 118, CRAB_SCR_W, 26, 0xC468); // Foreground sand shadow
+    // 2. Gentle rolling wave & curved foam shoreline (local y = 26..33)
+    int foamShift = (int)(sinf(timeSec * 1.5f) * 3.0f);
+    int waveY = 26 + foamShift;
 
-    // 3. Subtle sand speckles & tiny decorative beach pebbles
-    const uint16_t speckCols[] = {0xD4C9, 0xF691, 0xB3A6};
-    for (int i = 0; i < 42; i++)
+    // Wet darkened sand behind the receding wave
+    spr.fillRect(0, 23, CRAB_SCR_W, 18, 0x8B25);
+    spr.fillRect(0, waveY - 2, CRAB_SCR_W, 4, 0x04B5); // Wave crest
+    spr.fillRect(0, waveY + 2, CRAB_SCR_W, 2, 0xE7FF); // Crisp white seafoam edge
+
+    // Scalloped foam bubbles along the shoreline
+    for (int fx = 0; fx < CRAB_SCR_W; fx += 14)
+    {
+        int bx = (fx + (driftOffset / 2) + CRAB_SCR_W) % CRAB_SCR_W;
+        spr.fillCircle(bx, waveY + 3, 2, 0xB7FF);
+    }
+
+    // 3. Multi-tone warm golden sand (local y = 34..143)
+    spr.fillRect(0, waveY + 6, CRAB_SCR_W, 10, 0xB447); // Damp transition sand
+    spr.fillRect(0, waveY + 14, CRAB_SCR_W, BAND_H - (waveY + 14), 0xE5EB); // Sun-warmed golden sand
+    spr.fillRect(0, 116, CRAB_SCR_W, 28, 0xCD09); // Soft foreground sand dune shadow
+
+    // 4. Natural sand grain speckles & tiny shells/pebbles
+    const uint16_t speckCols[] = {0xD549, 0xF6F2, 0xAC06, 0xBE48};
+    for (int i = 0; i < 55; i++)
     {
         int px = ((i * 73) + driftOffset) % CRAB_SCR_W;
         if (px < 0) px += CRAB_SCR_W;
-        int py = 46 + ((i * 29) % 92);
-        spr.fillCircle(px, py, (i % 5 == 0) ? 2 : 1, speckCols[i % 3]);
+        int py = 46 + ((i * 29) % 94);
+        spr.fillCircle(px, py, (i % 7 == 0) ? 2 : 1, speckCols[i % 4]);
     }
 
-    // Tiny starfish / seashell detail on the sand
-    int starSx = (58 + driftOffset + CRAB_SCR_W) % CRAB_SCR_W;
+    // Decorative 5-arm starfish on the left beach
+    int starSx = (52 + driftOffset + CRAB_SCR_W) % CRAB_SCR_W;
     int starSy = 124;
-    spr.drawLine(starSx - 4, starSy, starSx + 4, starSy, 0xF986);
-    spr.drawLine(starSx, starSy - 4, starSx, starSy + 4, 0xF986);
-    spr.drawLine(starSx - 3, starSy - 3, starSx + 3, starSy + 3, 0xF986);
-    spr.drawLine(starSx - 3, starSy + 3, starSx + 3, starSy - 3, 0xF986);
-}
+    for (int a = 0; a < 5; a++)
+    {
+        float ang = (a * 72.0f - 90.0f) * 0.0174533f;
+        int tipX = starSx + (int)(cosf(ang) * 7.0f);
+        int tipY = starSy + (int)(sinf(ang) * 5.0f);
+        spr.drawLine(starSx, starSy, tipX, tipY, 0xE9A6);
+        spr.drawLine(starSx + 1, starSy, tipX, tipY, 0xFA68);
+    }
+    spr.fillCircle(starSx, starSy, 2, 0xFB4A);
 
+    // Tiny white scallop seashell on the right beach
+    int shX = (268 + driftOffset + CRAB_SCR_W) % CRAB_SCR_W;
+    int shY = 128;
+    spr.fillCircle(shX, shY, 4, 0xFFDF);
+    spr.drawLine(shX - 3, shY + 2, shX + 3, shY + 2, 0xD549);
+}
 // Draw the gorgeous spiral conch shell centered around (cx, cy)
 // dir: 1 = facing right (shell spirals to left), -1 = facing left (shell spirals to right)
 static void drawGorgeousShell(TFT_eSprite &spr, int cx, int cy, int dir, float tiltAngle)
 {
-    // Gorgeous coral, sunset-peach, cream, and magenta-rose palette
     const uint16_t colOuter    = 0xFA68; // Warm coral-salmon
     const uint16_t colMid      = 0xFD4C; // Peachy sunset orange
     const uint16_t colCream    = 0xFF77; // Warm pearl cream
     const uint16_t colTip      = 0xE26B; // Rose-magenta apex
-    const uint16_t colRim      = 0x78E2; // Crisp dark outline
+    const uint16_t colRim      = 0x60A1; // Deep warm brown-maroon outline
 
     int backDir = -dir;
     int bobY = (int)(sinf(tiltAngle) * 2.0f);
@@ -132,12 +176,12 @@ static void drawGorgeousShell(TFT_eSprite &spr, int cx, int cy, int dir, float t
     spr.drawLine(spireX + backDir * 12, spireY - 4, spireX - backDir * 4, spireY - 12, colRim);
     spr.drawLine(spireX + backDir * 12, spireY - 4, spireX - backDir * 2, spireY + 6, colRim);
 
-    // 2. Whorl 3 (smaller rear spiral chamber)
+    // 2. Whorl 3 (rear spiral chamber)
     int w3x = cx + backDir * 21;
     int w3y = cy - 10 + bobY;
     spr.fillCircle(w3x, w3y, 12, colCream);
     spr.drawCircle(w3x, w3y, 12, colRim);
-    spr.fillCircle(w3x - backDir * 2, w3y - 3, 4, TFT_WHITE);
+    spr.fillCircle(w3x - backDir * 2, w3y - 4, 4, TFT_WHITE);
 
     // 3. Whorl 2 (middle chamber)
     int w2x = cx + backDir * 11;
@@ -145,7 +189,7 @@ static void drawGorgeousShell(TFT_eSprite &spr, int cx, int cy, int dir, float t
     spr.fillCircle(w2x, w2y, 16, colMid);
     spr.drawCircle(w2x, w2y, 16, colRim);
     spr.drawArc(w2x, w2y, 13, 11, 200, 340, colCream, colMid);
-    spr.fillCircle(w2x - backDir * 3, w2y - 5, 4, TFT_WHITE);
+    spr.fillCircle(w2x - backDir * 3, w2y - 6, 4, TFT_WHITE);
 
     // 4. Main Body Whorl (large front chamber)
     int w1x = cx - backDir * 2;
@@ -155,45 +199,49 @@ static void drawGorgeousShell(TFT_eSprite &spr, int cx, int cy, int dir, float t
     spr.drawArc(w1x, w1y, 17, 15, 190, 350, colCream, colOuter);
     spr.drawArc(w1x, w1y, 12, 10, 200, 340, colMid, colOuter);
     spr.fillCircle(w1x - backDir * 4, w1y - 8, 5, 0xFFDF);
-    spr.fillCircle(w1x - backDir * 8, w1y - 4, 2, TFT_WHITE);
+    spr.fillCircle(w1x - backDir * 9, w1y - 4, 2, TFT_WHITE);
 
     // 5. Dark hollow shell opening (aperture) facing forward
     int openX = cx + dir * 13;
     int openY = cy + 3 + bobY;
-    spr.fillEllipse(openX, openY, 10, 14, 0x3041);
+    spr.fillEllipse(openX, openY, 10, 14, 0x2820);
     spr.drawEllipse(openX, openY, 11, 15, colCream);
     spr.drawEllipse(openX, openY, 12, 16, colRim);
 }
 
-// Draw cute cartoon eyes on stalks + twitching antennae
+// Draw extra-cute cartoon eyes on stalks + bouncy V-tipped antennae
 static void drawCrabEyesAndAntennae(TFT_eSprite &spr, int baseX, int baseY, int dir,
                                     float lookX, float lookY, bool blinking, float peekRatio)
 {
     if (peekRatio <= 0.05f)
         return;
 
-    const uint16_t colBody = 0xFA03; // Bright cute crab orange-red
-    const uint16_t colRim  = 0x78E2;
+    const uint16_t colBody = 0xFA03; // Bright cheerful coral-orange
+    const uint16_t colRim  = 0x60A1;
 
-    int stalkH = (int)(13.0f * peekRatio);
-    int eyeR = (peekRatio > 0.7f) ? 6 : 5;
+    int stalkH = (int)(14.0f * peekRatio);
+    int eyeR = (peekRatio > 0.7f) ? 7 : 5; // Bigger, cuter cartoon eyes!
 
-    // Two eye stalks side-by-side
-    int leftEyeX  = baseX + dir * 4 - 5;
-    int rightEyeX = baseX + dir * 4 + 6;
+    // Slightly angled cute eye stalks
+    int leftEyeX  = baseX + dir * 3 - 6;
+    int rightEyeX = baseX + dir * 5 + 6;
     int eyeY      = baseY - stalkH;
 
-    spr.fillRect(leftEyeX - 1, eyeY, 3, stalkH + 2, colBody);
-    spr.fillRect(rightEyeX - 1, eyeY, 3, stalkH + 2, colBody);
+    spr.drawLine(baseX + dir * 2 - 3, baseY + 2, leftEyeX, eyeY, colBody);
+    spr.drawLine(baseX + dir * 2 - 2, baseY + 2, leftEyeX + 1, eyeY, colBody);
+    spr.drawLine(baseX + dir * 4 + 3, baseY + 2, rightEyeX, eyeY, colBody);
+    spr.drawLine(baseX + dir * 4 + 4, baseY + 2, rightEyeX + 1, eyeY, colBody);
 
-    // Twitching antennae
-    int antTipX1 = leftEyeX - 7 - (int)(lookX * 1.5f);
-    int antTipX2 = rightEyeX + 7 + (int)(lookX * 1.5f);
-    int antTipY  = eyeY - 6;
-    spr.drawLine(leftEyeX - 2, eyeY + 4, antTipX1, antTipY, colBody);
-    spr.drawLine(rightEyeX + 2, eyeY + 4, antTipX2, antTipY, colBody);
+    // Bouncy antennae with tiny ball tips
+    int antTipX1 = leftEyeX - 8 - (int)(lookX * 1.5f);
+    int antTipX2 = rightEyeX + 8 + (int)(lookX * 1.5f);
+    int antTipY  = eyeY - 7;
+    spr.drawLine(leftEyeX - 2, eyeY + 3, antTipX1, antTipY, colBody);
+    spr.drawLine(rightEyeX + 2, eyeY + 3, antTipX2, antTipY, colBody);
+    spr.fillCircle(antTipX1, antTipY, 1, 0xFC86);
+    spr.fillCircle(antTipX2, antTipY, 1, 0xFC86);
 
-    // Eyeballs
+    // Big expressive cartoon eyeballs with double catchlights
     int ex[] = {leftEyeX, rightEyeX};
     for (int i = 0; i < 2; i++)
     {
@@ -201,7 +249,8 @@ static void drawCrabEyesAndAntennae(TFT_eSprite &spr, int baseX, int baseY, int 
         {
             spr.fillCircle(ex[i], eyeY, eyeR, colBody);
             spr.drawCircle(ex[i], eyeY, eyeR, colRim);
-            spr.drawFastHLine(ex[i] - eyeR + 1, eyeY, (eyeR * 2) - 2, colRim);
+            // Happy curved closed-eye lashes
+            spr.drawArc(ex[i], eyeY - 1, eyeR - 2, eyeR - 3, 200, 340, colRim, colBody);
         }
         else
         {
@@ -211,10 +260,16 @@ static void drawCrabEyesAndAntennae(TFT_eSprite &spr, int baseX, int baseY, int 
             int px = ex[i] + (int)constrain(lookX, -2.0f, 2.0f);
             int py = eyeY + (int)constrain(lookY, -2.0f, 2.0f);
             spr.fillCircle(px, py, 3, TFT_BLACK);
-            spr.fillCircle(px - 1, py - 1, 1, TFT_WHITE);
+            spr.fillCircle(px - 1, py - 2, 1, TFT_WHITE); // Primary catchlight
+            spr.drawPixel(px + 2, py + 1, TFT_WHITE);    // Secondary sparkle catchlight
         }
     }
 }
+// Vertical sand bounds inside the 144px beach sprite (y = 0 is water, y = 42..143 is sand)
+static float crabY = 96.0f;
+static float crabVy = 0.35f;
+constexpr float SAND_MIN_Y = 66.0f;  // Just below the wet shoreline foam
+constexpr float SAND_MAX_Y = 128.0f; // Near bottom edge of sand (leaves room for legs/shadow)
 
 // Render a complete frame of the hermit crab in its current state
 static void renderHermitCrabFrame(float timeSec, int driftOffset)
@@ -225,16 +280,16 @@ static void renderHermitCrabFrame(float timeSec, int driftOffset)
     drawBeachBackground(crabSpr, timeSec, driftOffset);
 
     int cx = (int)roundf(crabX);
-    int groundY = 96; // Sand contact line inside sprite
+    int groundY = (int)roundf(crabY); // Dynamic sand contact line inside sprite
 
     // Soft ground shadow beneath the crab
-    int shadowW = (crabState == CRAB_WALKING) ? 34 : 28;
-    crabSpr.fillEllipse(cx, groundY + 4, shadowW, 5, 0xA365);
+    int shadowW = (crabState == CRAB_WALKING) ? 35 : 28;
+    crabSpr.fillEllipse(cx, groundY + 4, shadowW, 5, 0x9B86);
 
     const uint16_t colCrab      = 0xFA03; // Bright cheerful orange-red
     const uint16_t colCrabLight = 0xFC86; // Warm claw/face highlight
     const uint16_t colCrabDark  = 0xB181; // Back leg shading
-    const uint16_t colRim       = 0x78E2;
+    const uint16_t colRim       = 0x60A1;
 
     if (crabState == CRAB_WALKING)
     {
@@ -264,29 +319,36 @@ static void renderHermitCrabFrame(float timeSec, int driftOffset)
         // 2. Gorgeous spiral shell on its back
         drawGorgeousShell(crabSpr, cx - crabDir * 4, bodyY - 8, crabDir, walkPhase * 0.5f);
 
-        // 3. Cute crab head/face peeking out of the shell aperture
+        // 3. Cute chubby crab head/face peeking out of the shell aperture
         int headX = cx + crabDir * 14;
         int headY = bodyY + 1;
-        crabSpr.fillEllipse(headX, headY, 9, 7, colCrab);
-        crabSpr.drawEllipse(headX, headY, 9, 7, colRim);
+        crabSpr.fillEllipse(headX, headY, 10, 8, colCrab);
+        crabSpr.drawEllipse(headX, headY, 10, 8, colRim);
 
-        // Cute tiny smile & rosy cheeks
-        crabSpr.fillCircle(headX + crabDir * 4, headY + 2, 2, 0xFBAE);
+        // Rosy blush cheeks & sweet happy smile
+        crabSpr.fillCircle(headX + crabDir * 5, headY + 2, 2, 0xFC94);
         crabSpr.drawPixel(headX + crabDir * 2, headY + 3, colRim);
         crabSpr.drawPixel(headX + crabDir * 3, headY + 4, colRim);
-        crabSpr.drawPixel(headX + crabDir * 4, headY + 3, colRim);
+        crabSpr.drawPixel(headX + crabDir * 4, headY + 4, colRim);
+        crabSpr.drawPixel(headX + crabDir * 5, headY + 3, colRim);
 
-        // 4. Cute front pincer claw
-        int clawWave = (int)(sinf(walkPhase * 0.7f) * 2.0f);
-        int bigClawX = headX + crabDir * 11;
-        int bigClawY = headY + 3 + clawWave;
-        crabSpr.fillEllipse(bigClawX, bigClawY, 7, 5, colCrabLight);
-        crabSpr.drawEllipse(bigClawX, bigClawY, 7, 5, colRim);
-        crabSpr.drawLine(bigClawX + crabDir * 2, bigClawY, bigClawX + crabDir * 7, bigClawY - 1, colRim);
+        // 4. Cute waving front pincer claw + tiny secondary claw
+        int clawWave = (int)(sinf(walkPhase * 0.7f) * 2.5f);
+        int bigClawX = headX + crabDir * 12;
+        int bigClawY = headY + 2 + clawWave;
+        crabSpr.fillEllipse(bigClawX, bigClawY, 8, 5, colCrabLight);
+        crabSpr.drawEllipse(bigClawX, bigClawY, 8, 5, colRim);
+        crabSpr.drawLine(bigClawX + crabDir * 2, bigClawY, bigClawX + crabDir * 8, bigClawY - 1, colRim);
+
+        // Tiny lower feeder claw
+        int smallClawX = headX + crabDir * 7;
+        int smallClawY = headY + 7 - (clawWave / 2);
+        crabSpr.fillCircle(smallClawX, smallClawY, 3, colCrabLight);
+        crabSpr.drawCircle(smallClawX, smallClawY, 3, colRim);
 
         // 5. Bobbing eye stalks & blinking
         bool blink = ((int)(timeSec * 10.0f) % 37 == 0);
-        drawCrabEyesAndAntennae(crabSpr, headX, headY - 4, crabDir, (float)crabDir * 1.5f, 0.0f, blink, 1.0f);
+        drawCrabEyesAndAntennae(crabSpr, headX, headY - 5, crabDir, (float)crabDir * 1.5f, crabVy * 1.5f, blink, 1.0f);
     }
     else
     {
@@ -317,6 +379,7 @@ static void renderHermitCrabFrame(float timeSec, int driftOffset)
 
     crabSpr.pushSprite(0, BAND_Y);
 }
+
 // Called when the user taps the screen while the screensaver is active.
 // Returns true if the screensaver should EXIT (second tap while hiding/peeking),
 // or false if the crab was startled into hiding (first tap).
@@ -338,11 +401,10 @@ bool handleScreenSaverTap()
             crabSpr.deleteSprite();
             crabSprReady = false;
         }
-        return true; // Wake up and free sprite RAM for main UI!
+        return true; // Wake up and free sprite RAM!
     }
 }
 
-// Main screensaver update loop (keeps existing signature for google-ai-main.cpp)
 // Main screensaver update loop (keeps existing signature for google-ai-main.cpp)
 void updateScreenSaverEyes(bool forceInit = false)
 {
@@ -360,7 +422,9 @@ void updateScreenSaverEyes(bool forceInit = false)
         crabState = CRAB_WALKING;
         stateStartedMs = now;
         crabX = 160.0f;
+        crabY = 96.0f;
         crabDir = 1;
+        crabVy = 0.32f;
         walkPhase = 0.0f;
         lastDriftOffset = driftOffset;
         tft.fillRect(0, BAND_Y, CRAB_SCR_W, BAND_H, TFT_BLACK);
@@ -387,8 +451,10 @@ void updateScreenSaverEyes(bool forceInit = false)
     if (crabState == CRAB_WALKING)
     {
         crabX += (float)crabDir * 1.35f;
+        crabY += crabVy;
         walkPhase += 0.28f;
 
+        // Horizontal beach bounds
         if (crabX >= 262.0f)
         {
             crabX = 262.0f;
@@ -398,6 +464,18 @@ void updateScreenSaverEyes(bool forceInit = false)
         {
             crabX = 58.0f;
             crabDir = 1;
+        }
+
+        // Vertical sand bounds (gentle diagonal wander with slight speed variation on bounce)
+        if (crabY >= SAND_MAX_Y)
+        {
+            crabY = SAND_MAX_Y;
+            crabVy = -0.28f - ((now % 3) * 0.06f);
+        }
+        else if (crabY <= SAND_MIN_Y)
+        {
+            crabY = SAND_MIN_Y;
+            crabVy = 0.28f + ((now % 3) * 0.06f);
         }
     }
     else if (crabState == CRAB_HIDING_FULL)
