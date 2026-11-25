@@ -2207,7 +2207,7 @@ void openInAppSetup()
 // ============================================================================
 void setup()
 {
-  // 1. Wake display & turn on backlight FIRST so user gets instant visual feedback
+  // 1. Wake display & turn on backlight FIRST for instant visual feedback
   tft.init();
   initBacklightPWM();
   tft.setRotation(1);
@@ -2219,21 +2219,9 @@ void setup()
   String savedSsid = getSavedWifiSSID();
   drawBootWelcomeScreen(savedSsid);
 
-  // 2. Play boot chime right after the screen is visible
+  // 2. Start boot chime immediately after screen turns on (non-blocking)
   LcarsAudio::begin(AZTOUCH_BEEPER);
   LcarsAudio::beepBoot();
-  unsigned long bootStart = millis();
-  int bootDotStep = 1;
-  while (millis() - bootStart < 400)
-  {
-    LcarsAudio::update();
-    if (savedSsid.length() > 0 && (millis() - bootStart) > (unsigned long)(bootDotStep * 130))
-    {
-      bootDotStep++;
-      String dots = (bootDotStep == 2) ? ".." : "...";
-      updateBootStepRow(0, BOOT_STEP_ACTIVE, "Connecting to Wi-Fi", savedSsid + dots);
-    }
-  }
 
   Serial.begin(115200);
   touch.begin();
@@ -2264,14 +2252,43 @@ void setup()
   wifiManager.addParameter(&custom_hol_year);
   wifiManager.addParameter(&custom_hol_where);
 
-  // 4. Connect to saved Wi-Fi (12s timeout), or start non-blocking AP named "holiday-xxxx"
-  wifiManager.setConnectTimeout(12);
-  wifiManager.setConnectRetries(2);
-  bool wifiConnected = wifiManager.autoConnect(otaHostname);
+  // 4. Connect to saved Wi-Fi with live animated progressive dots (12s timeout)
+  bool wifiConnected = false;
+  if (savedSsid.length() > 0)
+  {
+    WiFi.setHostname(otaHostname);
+    WiFi.begin(); // Uses credentials saved in ESP32 NVS
 
+    unsigned long wifiStartMs = millis();
+    unsigned long lastDotMs = 0;
+    int dotStep = 0;
+
+    while (WiFi.status() != WL_CONNECTED && (millis() - wifiStartMs < 12000UL))
+    {
+      LcarsAudio::update(); // Keep boot chime playing smoothly
+      unsigned long now = millis();
+      if (now - lastDotMs >= 300UL)
+      {
+        lastDotMs = now;
+        dotStep = (dotStep % 3) + 1;
+        String dots = (dotStep == 1) ? "." : ((dotStep == 2) ? ".." : "...");
+        updateBootStepRow(0, BOOT_STEP_ACTIVE, "Connecting to Wi-Fi" + dots, savedSsid);
+      }
+      delay(20);
+    }
+    wifiConnected = (WiFi.status() == WL_CONNECTED);
+  }
+
+  // Ensure boot chime finishes if Wi-Fi connected ultra-fast
+  while (LcarsAudio::isEnabled() && millis() < 450)
+  {
+    LcarsAudio::update();
+  }
+
+  // Fall back to WiFiManager AP hotspot if no saved Wi-Fi or connection failed
   if (!wifiConnected)
   {
-    Serial.println("Saved Wi-Fi failed; starting setup hotspot...");
+    Serial.println("Saved Wi-Fi failed or missing; starting setup hotspot...");
     WiFi.disconnect(true);
     delay(200);
     WiFi.mode(WIFI_AP_STA);
@@ -2296,6 +2313,9 @@ void setup()
   }
 
   wifiManager.setConfigPortalBlocking(true);
+
+  // Immediately turn Wi-Fi icon & text GREEN upon connection
+  updateBootStepRow(0, BOOT_STEP_DONE, "Connected to Wi-Fi", WiFi.SSID());
 
   // 5. Start OTA; only show the 10s Settings screen if unconfigured or user holds the screen
   bool mdnsOk = setupOTA();
@@ -2337,8 +2357,9 @@ void setup()
       break;
     }
 
-    // Re-draw minimal boot screen so the green Wi-Fi & NTP steps are clearly visible
+    // Re-draw minimal boot screen with green Wi-Fi row before starting NTP sync
     tft.fillScreen(TFT_BLACK);
+    updateBootStepRow(0, BOOT_STEP_DONE, "Connected to Wi-Fi", WiFi.SSID());
   }
   else
   {
@@ -2357,23 +2378,33 @@ void setup()
         custom_hol_where.getValue());
   }
 
-  // 7. Turn Wi-Fi step GREEN, then sync NTP time with animated progressive dots
-  updateBootStepRow(0, BOOT_STEP_DONE, "Connected to Wi-Fi", WiFi.SSID());
+  // 7. Sync NTP time with smooth 300ms animated progressive dots
   configTzTime(MY_TZ, "pool.ntp.org", "time.nist.gov");
 
   struct tm timeinfo;
-  int retry = 0;
-  while (!getLocalTime(&timeinfo, 400) && retry < 12)
+  unsigned long ntpStartMs = millis();
+  unsigned long lastNtpDotMs = 0;
+  int ntpDotStep = 0;
+  bool timeSynced = false;
+
+  while (millis() - ntpStartMs < 6000UL)
   {
-    String dots = "";
-    int dotCount = (retry % 3) + 1;
-    for (int d = 0; d < dotCount; d++)
-      dots += ".";
-    updateBootStepRow(1, BOOT_STEP_ACTIVE, "Getting Internet time" + dots, "Syncing UK clock (GMT/BST)");
-    retry++;
+    if (getLocalTime(&timeinfo, 50))
+    {
+      timeSynced = true;
+      break;
+    }
+    unsigned long now = millis();
+    if (now - lastNtpDotMs >= 300UL)
+    {
+      lastNtpDotMs = now;
+      ntpDotStep = (ntpDotStep % 3) + 1;
+      String dots = (ntpDotStep == 1) ? "." : ((ntpDotStep == 2) ? ".." : "...");
+      updateBootStepRow(1, BOOT_STEP_ACTIVE, "Getting Internet time" + dots, "Syncing UK clock (GMT/BST)");
+    }
   }
 
-  if (retry >= 12)
+  if (!timeSynced)
   {
     updateBootStepRow(1, BOOT_STEP_WARN, "Time sync delayed", "Retrying in background...");
     delay(1500);
@@ -2383,7 +2414,7 @@ void setup()
     char timeReadyBuf[24];
     snprintf(timeReadyBuf, sizeof(timeReadyBuf), "Synced: %02d:%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
     updateBootStepRow(1, BOOT_STEP_DONE, "Internet time synced", String(timeReadyBuf));
-    delay(650); // Brief pause so user sees both green icons before main screen opens
+    delay(650); // Brief pause so both green icons are clearly visible
   }
 
   tft.fillScreen(TFT_BLACK);
