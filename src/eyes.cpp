@@ -87,28 +87,52 @@ static void paintSkyElements(TFT_eSPI &target, int driftOffset, int yOffset)
         }
     }
 }
-
-// Draw static night-beach sky above and below the LED clock band
+// Draw static night-beach sky above (y = 0..21) and below (y = 70..95) the LED clock band
 static void drawStaticBeachSky(int driftOffset)
 {
+    // 1. Top strip above LED clock (y = 0..21)
     tft.fillRect(0, 0, CRAB_SCR_W, SS_CLOCK_Y, TFT_BLACK);
 
+    // Draw only the upper tip of the crescent moon (y = 15..21) so y = 22..69 stays untouched
+    int moonX = 258 + (driftOffset / 2);
+    int moonY = 30;
+    tft.setViewport(0, 0, CRAB_SCR_W, SS_CLOCK_Y);
+    tft.fillCircle(moonX, moonY, 15, 0x2126);
+    tft.fillCircle(moonX, moonY, 11, 0xFFDF);
+    tft.fillCircle(moonX - 5, moonY - 3, 10, TFT_BLACK);
+    tft.resetViewport();
+
+    // Stars in top strip (y = 0..21)
+    const int starX[] = {24, 72, 116, 158, 198, 294, 44, 138, 218, 182, 92, 282};
+    const int starY[] = {14, 30, 12, 24, 16, 18, 46, 40, 52, 60, 64, 62};
+    const uint16_t starCol[] = {TFT_WHITE, 0xB7FF, 0xFFE8, TFT_SILVER};
+
+    for (int i = 0; i < 12; i++)
+    {
+        if (starY[i] >= SS_CLOCK_Y - 1) continue;
+        int sx = (starX[i] + driftOffset + CRAB_SCR_W) % CRAB_SCR_W;
+        int sy = starY[i];
+        tft.drawPixel(sx, sy, starCol[i % 4]);
+    }
+
+    // 2. Lower twilight strip below LED clock (y = 70..95)
     tft.fillRect(0, 70, CRAB_SCR_W, 12, 0x0085);
     tft.fillRect(0, 82, CRAB_SCR_W, 8, 0x0108);
     tft.fillRect(0, 90, CRAB_SCR_W, 6, 0x018B);
-
-    paintSkyElements(tft, driftOffset, 0);
 }
 
 // Render the 7-segment LED countdown or local time cleanly over the night sky (y = 22..69)
 void drawScreenSaverClock(int days, int hours, int mins, int secs, bool showColon, bool isArrived, time_t rawlocal, int driftOffset)
 {
+    // 1. Background sky gradient inside sprite (local y = 0..47 -> screen y = 22..69)
     countdownFgSprite.fillRect(0, 0, CRAB_SCR_W, 26, TFT_BLACK);
     countdownFgSprite.fillRect(0, 26, CRAB_SCR_W, 20, 0x0043);
     countdownFgSprite.fillRect(0, 46, CRAB_SCR_W, 2, 0x0085);
 
+    // 2. Paint crescent moon, clouds & stars into background sprite FIRST
     paintSkyElements(countdownFgSprite, driftOffset, SS_CLOCK_Y);
 
+    // 3. Draw 7-segment LED digits ON TOP in the foreground
     countdownFgSprite.setTextSize(1);
     countdownFgSprite.setTextFont(7);
     countdownFgSprite.setTextColor(TFT_DARKCYAN);

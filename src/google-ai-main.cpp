@@ -299,26 +299,36 @@ bool setupOTA()
       <label class="field">Departure Time (UK)</label>
       <input type="time" name="time" value=")rawliteral" + String(timeBuf) + R"rawliteral(" required>
 
-      <label class="field">Birthday Date (Ignore year)</label>
+      <label class="field">Birthday (Day &amp; Month)</label>
       <input type="date" name="bday" value=")rawliteral" + String(bdayBuf) + R"rawliteral(">
 
       <div class="grid">
         <label class="chk"><input type="checkbox" name="ssaver" value="1" )rawliteral" + String(gScreensaverEnabled ? "checked" : "") + R"rawliteral(>Screensaver</label>
-        <label class="chk"><input type="checkbox" name="dim" value="1" )rawliteral" + String(gDimmerEnabled ? "checked" : "") + R"rawliteral(>Dimmer</label>
+        <label class="chk"><input type="checkbox" name="dim" value="1" )rawliteral" + String(gDimmerEnabled ? "checked" : "") + R"rawliteral(>Auto-Dim</label>
         <label class="chk"><input type="checkbox" name="wxen" value="1" )rawliteral" + String(gWeatherEnabled ? "checked" : "") + R"rawliteral(>Weather</label>
-        <label class="chk"><input type="checkbox" name="isl1h" value="1" )rawliteral" + String(gIslandPlusOne ? "checked" : "") + R"rawliteral(>Island +1h</label>
+        <label class="chk"><input type="checkbox" name="isl1h" value="1" )rawliteral" + String(gIslandPlusOne ? "checked" : "") + R"rawliteral(>Resort Time +1h</label>
         <label class="chk"><input type="checkbox" name="bdayen" value="1" )rawliteral" + String(gBirthdayEnabled ? "checked" : "") + R"rawliteral(>Birthday</label>
-        <label class="chk"><input type="checkbox" name="rainpct" value="1" )rawliteral" + String(gRainAsPercent ? "checked" : "") + R"rawliteral(>Rain as %</label>
+        <label class="chk"><input type="checkbox" name="rainpct" value="1" )rawliteral" + String(gRainAsPercent ? "checked" : "") + R"rawliteral(>Rain Chance (%)</label>
       </div>
 
-      <button type="submit">Save &amp; Reboot</button>
+      <button type="submit">Save &amp; Restart</button>
     </form>
-    <button type="button" class="test-btn" id="testBdayBtn">Test Birthday Celebration</button>
+    <button type="button" class="test-btn" id="testBdayBtn">Preview Birthday Screen</button>
     <div id="bdayStatus"></div>
-    <button type="button" class="test-btn" id="testSsaverBtn" style="background:#00695c;">Test Screensaver</button>
+    <button type="button" class="test-btn" id="testSsaverBtn" style="background:#00695c;">Preview Screensaver</button>
     <div id="ssaverStatus"></div>
   </div>
   <div class="card">
+    <h2>Software Update</h2>
+    <p style="font-size:13px;color:#aaa;margin-top:0">Device address: <b>)rawliteral" + String(otaHostname) + R"rawliteral(.local</b></p>
+    <form id="otaForm">
+      <input type="file" id="fwFile" name="update" accept=".bin">
+      <button type="submit" class="ota-btn" id="uploadBtn">Install Update</button>
+    </form>
+    <div id="progWrap"><div id="progBar"></div></div>
+    <div id="otaStatus"></div>
+  </div>
+    <div class="card">
     <h2>Update this device</h2>
     <p style="font-size:13px;color:#aaa;margin-top:0">Host: <b>)rawliteral" + String(otaHostname) + R"rawliteral(.local</b></p>
     <form id="otaForm">
@@ -1341,7 +1351,7 @@ void drawConfigScreenBase(int16_t col1X, int16_t col2X, int16_t tileW,
   drawToggleTile(col2X, row1Y, tileW, "Dimmer", gDimmerEnabled);
 
   drawToggleTile(col1X, row2Y, tileW, "Weather", gWeatherEnabled);
-  drawToggleTile(col2X, row2Y, tileW, "Island +1h", gIslandPlusOne);
+  drawToggleTile(col2X, row2Y, tileW, "Resort +1hr", gIslandPlusOne);
 
   drawToggleTile(col1X, row3Y, tileW, "Birthday", gBirthdayEnabled);
   drawToggleTile(col2X, row3Y, tileW, "Rain as:", gRainAsPercent, "%", "mm", true);
@@ -1456,7 +1466,7 @@ bool areWeConfiguring(bool mdnsOk)
         startAt = millis();
         lastSecsLeft = -1;
       }
-      // Row 2 Right: Island +1h
+      // Row 2 Right: Resort +1h
       else if (tx >= col2X && tx <= (col2X + tileW) && ty >= row2Y && ty <= (row2Y + tileH))
       {
         gIslandPlusOne = !gIslandPlusOne;
@@ -1464,7 +1474,7 @@ bool areWeConfiguring(bool mdnsOk)
         prefs.putBool("isl1h", gIslandPlusOne);
         prefs.end();
 
-        drawToggleTile(col2X, row2Y, tileW, "Island +1h", gIslandPlusOne);
+        drawToggleTile(col2X, row2Y, tileW, "Resort +1h", gIslandPlusOne);
         tone(AZTOUCH_BEEPER, gIslandPlusOne ? 880 : 440, 80);
 
         startAt = millis();
@@ -1658,13 +1668,13 @@ void drawBootWelcomeScreen(const String &savedSsid)
   }
   else
   {
-    tft.setTextColor(TFT_RED, TFT_BLACK);
+    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
     tft.setCursor(16, 62);
-    tft.print("Status: Invalid settings found");
+    tft.print("Status: Setup needed");
 
     tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
     tft.setCursor(16, 86);
-    tft.print("Please reconfigure in setup portal");
+    tft.print("Use Settings below to set your trip");
   }
 
   // Wi-Fi Connection Status Card (y = 142..234)
@@ -1695,11 +1705,11 @@ void drawBootWelcomeScreen(const String &savedSsid)
     tft.setCursor(16, 192);
     tft.printf("Starting hotspot %s...", otaHostname);
   }
-
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-  tft.drawString("Hold for Settings & Options", SCREEN_W / 2, 222, 1);
+  tft.drawString("Touch & hold screen for Settings", SCREEN_W / 2, 222, 1);
   tft.setTextDatum(TL_DATUM);
+
 }
 
 void drawSetupPortalScreen(const String &apName, bool showTimeoutHint)
@@ -2363,7 +2373,7 @@ void setup()
 
     tft.setTextColor(TFT_CYAN, TFT_BLACK);
     tft.setCursor(16, 190);
-    tft.print("Syncing NTP time");
+    tft.print("Setting the clock...");
   }
   else
   {
