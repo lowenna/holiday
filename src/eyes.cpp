@@ -449,6 +449,15 @@ bool handleScreenSaverTap()
         return true;
     }
 }
+void releaseCrabSprite()
+{
+    if (crabSprReady)
+    {
+        crabSpr.deleteSprite();
+        crabSprReady = false;
+    }
+}
+
 
 int getScreenSaverDriftOffset()
 {

@@ -327,12 +327,21 @@ void drawHourlyForecastBar()
 
     TFT_eSprite hSpr(&tft);
     hSpr.setColorDepth(16);
-    hSpr.createSprite(WX_SCREEN_W, HOURLY_H);
+    if (hSpr.createSprite(WX_SCREEN_W, HOURLY_H) == nullptr)
+    {
+        Serial.println("[WX] hSpr alloc failed");
+        return;
+    }
     fillSpriteWithMaldivesSlice(hSpr, HOURLY_Y, HOURLY_H);
 
     TFT_eSprite fgSpr(&tft);
-    fgSpr.setColorDepth(16);
-    fgSpr.createSprite(WX_SCREEN_W, HOURLY_H);
+    fgSpr.setColorDepth(8);
+    if (fgSpr.createSprite(WX_SCREEN_W, HOURLY_H) == nullptr)
+    {
+        hSpr.deleteSprite();
+        Serial.println("[WX] fgSpr alloc failed");
+        return;
+    }
     fgSpr.fillSprite(TFT_BLACK);
 
     const int slotW = 38;

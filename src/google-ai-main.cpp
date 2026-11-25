@@ -44,6 +44,7 @@ bool otaInProgress = false;
 
 extern void updateScreenSaverEyes(bool);                          // eyes.cpp
 extern bool handleScreenSaverTap();                               // eyes.cpp
+extern void releaseCrabSprite();                                  // eyes.cpp
 extern void drawScreenSaverClock(int days, int hours, int mins, int secs, bool showColon, bool isArrived, time_t rawlocal, int driftOffset); // eyes.cpp
 extern int getScreenSaverDriftOffset();                           // eyes.cpp
 extern void drawWeatherBadge();                                   // weather.cpp
@@ -328,21 +329,11 @@ bool setupOTA()
     <div id="progWrap"><div id="progBar"></div></div>
     <div id="otaStatus"></div>
   </div>
-    <div class="card">
-    <h2>Update this device</h2>
-    <p style="font-size:13px;color:#aaa;margin-top:0">Host: <b>)rawliteral" + String(otaHostname) + R"rawliteral(.local</b></p>
-    <form id="otaForm">
-      <input type="file" id="fwFile" name="update">
-      <button type="submit" class="ota-btn" id="uploadBtn">Click to update</button>
-    </form>
-    <div id="progWrap"><div id="progBar"></div></div>
-    <div id="otaStatus"></div>
-  </div>
 
   <script>
     document.getElementById('testBdayBtn').addEventListener('click', function() {
       const bStatus = document.getElementById('bdayStatus');
-      bStatus.textContent = 'Triggering birthday celebration on screen...';
+      bStatus.textContent = 'Showing birthday preview on screen...';
       fetch('/testbday', { method: 'POST' })
         .then(function(r) { return r.text(); })
         .then(function(txt) { bStatus.textContent = txt; })
@@ -366,15 +357,15 @@ bool setupOTA()
     document.getElementById('otaForm').addEventListener('submit', function(e) {
       e.preventDefault();
       if (!fwInput.files || fwInput.files.length === 0) {
-        statusEl.textContent = 'Please choose a .bin file first.';
+        statusEl.textContent = 'Please select an update file (.bin) first.';
         return;
       }
       const formData = new FormData();
-      formData.append('update', fwInput.files[0]);
+      formData.append('update', fwInput.files);
 
       progWrap.style.display = 'block';
       progBar.style.width = '0%';
-      statusEl.textContent = 'Uploading firmware...';
+      statusEl.textContent = 'Uploading update...';
       document.getElementById('uploadBtn').disabled = true;
 
       const xhr = new XMLHttpRequest();
@@ -389,7 +380,7 @@ bool setupOTA()
       xhr.onload = function() {
         if (xhr.status === 200) {
           progBar.style.width = '100%';
-          statusEl.textContent = 'Update OK! Rebooting device...';
+          statusEl.textContent = 'Update complete! Restarting device...';
           setTimeout(function() { location.reload(); }, 6000);
         } else {
           statusEl.textContent = 'Update failed (' + xhr.status + ')';
@@ -1027,13 +1018,17 @@ void fillSpriteWithMaldivesSlice(TFT_eSprite &spr, int16_t screenY, int16_t slic
 void drawWhere(bool isArrived = false)
 {
   const int16_t bannerH = 42;
-  const uint8_t textAlpha = 190;   // 0 = invisible, 255 = solid (180-210 gives a nice frosted translucent look)
-  const uint8_t shadowAlpha = 110; // Subtle translucent drop shadow
+  const uint8_t textAlpha = 190;
+  const uint8_t shadowAlpha = 110;
 
-  // 1. Decode the exact Maldives photo slice into the background sprite
+  // 1. Decode the exact Maldives photo slice into a single temporary background sprite
   TFT_eSprite bg(&tft);
   bg.setColorDepth(16);
-  bg.createSprite(SCREEN_W, bannerH);
+  if (bg.createSprite(SCREEN_W, bannerH) == nullptr)
+  {
+    Serial.println("[ERR] drawWhere bg sprite alloc failed");
+    return;
+  }
   bg.setSwapBytes(true);
   bg.fillSprite(TFT_BLACK);
 
@@ -1042,57 +1037,47 @@ void drawWhere(bool isArrived = false)
   TJpgDec.drawJpg(0, BG_IMAGE_Y - WHERE_Y, maldives__esp32__jpg, sizeof(maldives__esp32__jpg));
   gWhereBgSpritePtr = nullptr;
 
-  // 2. Render the destination text onto a separate 16-bit sprite using TFT_BLACK as transparent key
-  TFT_eSprite txt(&tft);
-  txt.setColorDepth(16);
-  txt.createSprite(SCREEN_W, bannerH);
-  txt.fillSprite(TFT_BLACK);
+  // 2. Reuse pre-allocated countdownFgSprite (320x48) for text rendering to avoid heap fragmentation
+  countdownFgSprite.fillSprite(TFT_BLACK);
 
   String displayText = isArrived ? (String(gWhere) + "!") : String(gWhere);
-  txt.setTextDatum(MC_DATUM);
+  countdownFgSprite.setTextDatum(MC_DATUM);
 
   uint16_t mainCol = isArrived ? TFT_GOLD : TFT_WHITE;
   uint16_t shadowCol = TFT_NAVY;
 
 #ifdef SMOOTH_FONT
-  txt.loadFont(NotoSansBold36);
-
-  // Draw shadow first, then main text
-  txt.setTextColor(shadowCol, TFT_BLACK, false);
-  txt.drawString(displayText, (SCREEN_W / 2) + 2, 22);
-
-  txt.setTextColor(mainCol, TFT_BLACK, false);
-  txt.drawString(displayText, SCREEN_W / 2, 20);
-
-  txt.unloadFont();
+  countdownFgSprite.loadFont(NotoSansBold36);
+  countdownFgSprite.setTextColor(shadowCol, TFT_BLACK, false);
+  countdownFgSprite.drawString(displayText, (SCREEN_W / 2) + 2, 22);
+  countdownFgSprite.setTextColor(mainCol, TFT_BLACK, false);
+  countdownFgSprite.drawString(displayText, SCREEN_W / 2, 20);
+  countdownFgSprite.unloadFont();
 #else
-  txt.setFreeFont(isArrived ? &FreeSansBold12pt7b : &FreeSansBold18pt7b);
-  txt.setTextColor(shadowCol);
-  txt.drawString(displayText, (SCREEN_W / 2) + 2, 22);
-  txt.setTextColor(mainCol);
-  txt.drawString(displayText, SCREEN_W / 2, 20);
+  countdownFgSprite.setFreeFont(isArrived ? &FreeSansBold12pt7b : &FreeSansBold18pt7b);
+  countdownFgSprite.setTextColor(shadowCol);
+  countdownFgSprite.drawString(displayText, (SCREEN_W / 2) + 2, 22);
+  countdownFgSprite.setTextColor(mainCol);
+  countdownFgSprite.drawString(displayText, SCREEN_W / 2, 20);
 #endif
+  countdownFgSprite.setTextDatum(TL_DATUM);
 
   // 3. Alpha-blend non-black text/shadow pixels over the Maldives photo pixels
   for (int16_t y = 0; y < bannerH; y++)
   {
     for (int16_t x = 0; x < SCREEN_W; x++)
     {
-      uint16_t fgPix = txt.readPixel(x, y);
+      uint16_t fgPix = countdownFgSprite.readPixel(x, y);
       if (fgPix != TFT_BLACK)
       {
         uint16_t bgPix = bg.readPixel(x, y);
-        // Apply lighter alpha to pure shadow pixels and stronger alpha to main text & anti-aliased edges
         uint8_t alpha = (fgPix == shadowCol) ? shadowAlpha : textAlpha;
-        uint16_t blended = tft.alphaBlend(alpha, fgPix, bgPix);
-        bg.drawPixel(x, y, blended);
+        bg.drawPixel(x, y, tft.alphaBlend(alpha, fgPix, bgPix));
       }
     }
   }
 
-  txt.deleteSprite();
-
-  // 4. Push the blended result to the screen
+  // 4. Push the blended result and free bg immediately
   bg.pushSprite(0, WHERE_Y);
   bg.deleteSprite();
 }
@@ -2024,6 +2009,7 @@ void displaySSIDAndWhen()
 void wakeFromScreenSaver(bool isArrived)
 {
   inScreenSaver = false;
+  releaseCrabSprite();
   tft.fillScreen(TFT_BLACK);
   displaySSIDAndWhen();
   drawStaticBackgroundImage();
