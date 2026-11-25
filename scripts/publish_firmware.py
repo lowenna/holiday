@@ -4,7 +4,7 @@ import shutil
 import json
 from datetime import datetime
 
-REPO_RAW_BASE = "https://githubusercontent.com"
+REPO_RAW_BASE = "https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/firmware"
 
 def after_build(source, target, env):
     bin_path = str(next(iter(target)))

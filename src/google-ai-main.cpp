@@ -340,15 +340,23 @@ bool setupOTA()
   </div>
   <div class="card">
     <h2>Software Update</h2>
-    <p style="font-size:13px;color:#aaa;margin-top:0">Device address: <b>)rawliteral" + String(otaHostname) + R"rawliteral(.local</b></p>
+    <p style="font-size:13px;color:#aaa;margin:0 0 6px 0">Device: <b>)rawliteral" + String(otaHostname) + R"rawliteral(.local</b></p>
+    <p style="font-size:13px;color:#4dd0e1;margin:0 0 14px 0">Installed: <b>v)rawliteral" + String(FW_VERSION) + R"rawliteral(</b></p>
+
+    <button type="button" id="checkGhBtn" style="margin-top:0;background:#00695c;">Check GitHub for Update</button>
+    <div id="ghStatus" style="font-size:13px;color:#aaa;margin-top:8px;text-align:center;"></div>
+    <button type="button" id="installGhBtn" style="display:none;background:#2e7d32;margin-top:10px;">Install Cloud Update</button>
+
+    <hr style="border:0;border-top:1px solid #333;margin:18px 0;">
+
     <form id="otaForm">
+      <label class="field" style="margin-top:0">Or upload manual .bin file:</label>
       <input type="file" id="fwFile" name="update" accept=".bin">
-      <button type="submit" class="ota-btn" id="uploadBtn">Install Update</button>
+      <button type="submit" class="ota-btn" id="uploadBtn">Install Local File</button>
     </form>
     <div id="progWrap"><div id="progBar"></div></div>
     <div id="otaStatus"></div>
   </div>
-
   <script>
     document.getElementById('testBdayBtn').addEventListener('click', function() {
       const bStatus = document.getElementById('bdayStatus');
@@ -414,6 +422,56 @@ bool setupOTA()
       xhr.send(formData);
     });
   </script>
+    const CURRENT_VER = ")rawliteral" + String(FW_VERSION) + R"rawliteral(";
+    let cloudBinUrl = "";
+
+    document.getElementById('checkGhBtn').addEventListener('click', function() {
+      const ghStatus = document.getElementById('ghStatus');
+      const installBtn = document.getElementById('installGhBtn');
+      ghStatus.style.color = '#aaa';
+      ghStatus.textContent = 'Checking GitHub...';
+      installBtn.style.display = 'none';
+
+      fetch('https://githubusercontent.com' + Date.now())
+        .then(function(r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.json();
+        })
+        .then(function(data) {
+          if (data.version && data.version > CURRENT_VER) {
+            cloudBinUrl = data.url;
+            ghStatus.style.color = '#69f0ae';
+            ghStatus.textContent = 'New version available: v' + data.version;
+            installBtn.textContent = 'Install v' + data.version + ' Now';
+            installBtn.style.display = 'block';
+          } else {
+            ghStatus.style.color = '#4dd0e1';
+            ghStatus.textContent = 'You are on the latest version (v' + CURRENT_VER + ').';
+          }
+        })
+        .catch(function(err) {
+          ghStatus.style.color = '#ff8a80';
+          ghStatus.textContent = 'Could not reach GitHub (' + err.message + ')';
+        });
+    });
+
+    document.getElementById('installGhBtn').addEventListener('click', function() {
+      if (!cloudBinUrl) return;
+      const ghStatus = document.getElementById('ghStatus');
+      this.disabled = true;
+      ghStatus.style.color = '#ffd54f';
+      ghStatus.textContent = 'Starting cloud update on device...';
+
+      fetch('/cloudota?url=' + encodeURIComponent(cloudBinUrl), { method: 'POST' })
+        .then(function() {
+          ghStatus.textContent = 'Downloading & flashing on screen... Reloading in 15s.';
+          setTimeout(function() { location.reload(); }, 15000);
+        })
+        .catch(function() {
+          ghStatus.textContent = 'Update triggered! Reloading in 15s...';
+          setTimeout(function() { location.reload(); }, 15000);
+        });
+    });
 </body>
 </html>
 )rawliteral";

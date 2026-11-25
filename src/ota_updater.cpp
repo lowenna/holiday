@@ -30,7 +30,7 @@ static constexpr uint16_t UPD_SUCCESS_DK = 0x0386;
 static constexpr uint16_t UPD_TEXT_MUTED = 0x9CD3;
 
 static const char *VERSION_JSON_URL =
-    "https://githubusercontent.com";
+    "https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/firmware/version.json";
 
 static String extractJsonString(const String &json, const String &key)
 {
