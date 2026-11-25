@@ -1160,21 +1160,24 @@ void saveConfigCallback()
   Serial.println("WiFiManager config changed; flagging for NVS save.");
   shouldSaveConfig = true;
 }
-void drawToggleTile(int16_t tileX, int16_t tileY, int16_t tileW, const char *label, bool isEnabled)
+void drawToggleTile(int16_t tileX, int16_t tileY, int16_t tileW, const char *label, bool isEnabled,
+                    const char *onText = "ON", const char *offText = "OFF", bool isModeSelector = false)
 {
   const int16_t tileH = 38;
 
+  uint16_t cardBorder = isModeSelector ? TFT_DARKCYAN : (isEnabled ? TFT_DARKGREEN : TFT_DARKGREY);
   tft.fillRoundRect(tileX, tileY, tileW, tileH, 6, TFT_BLACK);
-  tft.drawRoundRect(tileX, tileY, tileW, tileH, 6, isEnabled ? TFT_DARKGREEN : TFT_DARKGREY);
+  tft.drawRoundRect(tileX, tileY, tileW, tileH, 6, cardBorder);
 
   // Label on top-left of tile
   tft.setTextDatum(TL_DATUM);
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
   tft.drawString(label, tileX + 8, tileY + 2, 2);
 
-  // "ON" / "OFF" status on bottom-left
-  tft.setTextColor(isEnabled ? TFT_GREEN : TFT_RED, TFT_BLACK);
-  tft.drawString(isEnabled ? "ON" : "OFF", tileX + 8, tileY + 19, 2);
+  // State text on bottom-left ("ON"/"OFF" or "mm"/"%")
+  uint16_t textCol = isModeSelector ? TFT_CYAN : (isEnabled ? TFT_GREEN : TFT_RED);
+  tft.setTextColor(textCol, TFT_BLACK);
+  tft.drawString(isEnabled ? onText : offText, tileX + 8, tileY + 19, 2);
 
   // Compact sliding pill switch on bottom-right (46x16)
   const int16_t swW = 46;
@@ -1182,8 +1185,8 @@ void drawToggleTile(int16_t tileX, int16_t tileY, int16_t tileW, const char *lab
   const int16_t swX = tileX + tileW - swW - 8;
   const int16_t swY = tileY + 19;
 
-  uint16_t trackCol = isEnabled ? TFT_DARKGREEN : TFT_DARKGREY;
-  uint16_t borderCol = isEnabled ? TFT_GREEN : TFT_LIGHTGREY;
+  uint16_t trackCol = isModeSelector ? TFT_NAVY : (isEnabled ? TFT_DARKGREEN : TFT_DARKGREY);
+  uint16_t borderCol = isModeSelector ? TFT_CYAN : (isEnabled ? TFT_GREEN : TFT_LIGHTGREY);
 
   tft.fillRoundRect(swX, swY, swW, swH, swH / 2, trackCol);
   tft.drawRoundRect(swX, swY, swW, swH, swH / 2, borderCol);
@@ -1310,7 +1313,7 @@ void drawConfigScreenBase(int16_t col1X, int16_t col2X, int16_t tileW,
   tft.drawFastHLine(0, 24, SCREEN_W, TFT_CYAN);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_WHITE, TFT_NAVY);
-  tft.drawString("Options", SCREEN_W / 2, 12, 2);
+  tft.drawString("Settings & Options", SCREEN_W / 2, 12, 2);
   tft.setTextDatum(TL_DATUM);
 
   // 2. Toggle Tiles (y = 32..166)
@@ -1321,9 +1324,9 @@ void drawConfigScreenBase(int16_t col1X, int16_t col2X, int16_t tileW,
   drawToggleTile(col2X, row2Y, tileW, "Island +1h", gIslandPlusOne);
 
   drawToggleTile(col1X, row3Y, tileW, "Birthday", gBirthdayEnabled);
-  drawToggleTile(col2X, row3Y, tileW, gRainAsPercent ? "Rain: %" : "Rain: mm", gRainAsPercent);
+  drawToggleTile(col2X, row3Y, tileW, "Rain as:", gRainAsPercent, "%", "mm", true);
 
-  // 3. Bottom Action Buttons: Setup | Update | Start (10s...)
+  // 3. Bottom Action Buttons: WiFi | Settings | Start (10s...)
   tft.drawRoundRect(setupX, btnY, btnW, btnH, 6, TFT_CYAN);
   tft.fillRoundRect(setupX + 2, btnY + 2, btnW - 4, btnH - 4, 5, TFT_NAVY);
   tft.setTextDatum(MC_DATUM);
@@ -1469,19 +1472,19 @@ bool areWeConfiguring(bool mdnsOk)
         prefs.putBool("rainpct", gRainAsPercent);
         prefs.end();
 
-        drawToggleTile(col2X, row3Y, tileW, gRainAsPercent ? "Rain: %" : "Rain: mm", gRainAsPercent);
+        drawToggleTile(col2X, row3Y, tileW, "Rain as:", gRainAsPercent, "%", "mm", true);
         tone(AZTOUCH_BEEPER, gRainAsPercent ? 880 : 440, 80);
 
         startAt = millis();
         lastSecsLeft = -1;
       }
-      // Button 1: Setup
+      // Button 1: WiFi
       else if (tx >= setupX && tx <= (setupX + btnW) && ty >= btnY && ty <= (btnY + btnH))
       {
         tone(AZTOUCH_BEEPER, 880, 60);
         triggered = true;
       }
-      // Button 2: Update
+      // Button 2: Settings
       else if (tx >= updateX && tx <= (updateX + btnW) && ty >= btnY && ty <= (btnY + btnH))
       {
         tone(AZTOUCH_BEEPER, 880, 60);
