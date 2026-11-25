@@ -187,8 +187,8 @@ void handleOTAUpload()
     Serial.printf("OTA Update Start: %s\n", upload.filename.c_str());
     otaInProgress = true;
     tft.fillScreen(TFT_BLACK);
-    tft.setTextColor(TFT_CYAN, TFT_BLACK);
-    tft.drawCentreString("OTA UPDATE IN PROGRESS...", 160, 100, 4);
+    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+    tft.drawCentreString("Updating, please wait...", 160, 100, 4);
     if (!Update.begin(UPDATE_SIZE_UNKNOWN))
     {
       Update.printError(Serial);
@@ -298,7 +298,6 @@ bool setupOTA()
       <label class="field">Birthday Date (Ignore year)</label>
       <input type="date" name="bday" value=")rawliteral" + String(bdayBuf) + R"rawliteral(">
 
-      // Inside otaServer.on("/", HTTP_GET, ...), replace the <div class="grid"> block with:
       <div class="grid">
         <label class="chk"><input type="checkbox" name="ssaver" value="1" )rawliteral" + String(gScreensaverEnabled ? "checked" : "") + R"rawliteral(>Screensaver</label>
         <label class="chk"><input type="checkbox" name="dim" value="1" )rawliteral" + String(gDimmerEnabled ? "checked" : "") + R"rawliteral(>Dimmer</label>
@@ -315,11 +314,11 @@ bool setupOTA()
   </div>
 
   <div class="card">
-    <h2>Firmware OTA Update</h2>
+    <h2>Update this device</h2>
     <p style="font-size:13px;color:#aaa;margin-top:0">Host: <b>)rawliteral" + String(otaHostname) + R"rawliteral(.local</b></p>
     <form id="otaForm">
       <input type="file" id="fwFile" name="update">
-      <button type="submit" class="ota-btn" id="uploadBtn">Upload &amp; Flash .bin</button>
+      <button type="submit" class="ota-btn" id="uploadBtn">Click to update</button>
     </form>
     <div id="progWrap"><div id="progBar"></div></div>
     <div id="otaStatus"></div>
@@ -469,7 +468,7 @@ bool setupOTA()
     } }, handleOTAUpload);
 
   otaServer.begin();
-  Serial.printf("Web UI & OTA Ready: http://%s.local (IP: %s)\n", otaHostname, WiFi.localIP().toString().c_str());
+  Serial.printf("Setup at: http://%s.local (IP: %s)\n", otaHostname, WiFi.localIP().toString().c_str());
   return mdnsOk;
 }
 
@@ -482,7 +481,7 @@ void drawOtaProgressScreen(const char *statusText, int percent)
     tft.fillRect(0, 0, SCREEN_W, 26, TFT_NAVY);
     tft.setTextColor(TFT_WHITE, TFT_NAVY);
     tft.setTextDatum(MC_DATUM);
-    tft.drawString("FIRMWARE OTA UPDATE", SCREEN_W / 2, 13, 2);
+    tft.drawString("SOFTWARE UPDATE", SCREEN_W / 2, 13, 2);
   }
 
   tft.setTextDatum(MC_DATUM);
@@ -1204,7 +1203,7 @@ void showWebUpdateInfoScreen(bool mdnsOk)
   tft.drawFastHLine(0, 24, SCREEN_W, TFT_CYAN);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_WHITE, TFT_NAVY);
-  tft.drawString("Web UI & OTA Update", SCREEN_W / 2, 12, 2);
+  tft.drawString("Software Update", SCREEN_W / 2, 12, 2);
 
   // Instruction & URL Card
   tft.drawRoundRect(10, 34, SCREEN_W - 20, 134, 8, TFT_DARKCYAN);
@@ -1214,9 +1213,9 @@ void showWebUpdateInfoScreen(bool mdnsOk)
 
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
   tft.setCursor(18, 42);
-  tft.print("Browse from phone or PC to");
+  tft.print("Browse from your phone or PC to");
   tft.setCursor(18, 60);
-  tft.print("change settings or flash .bin:");
+  tft.print("change settings or update software");
 
   int urlY = 90;
   if (mdnsOk)
@@ -1224,6 +1223,8 @@ void showWebUpdateInfoScreen(bool mdnsOk)
     tft.setTextColor(TFT_GREEN, TFT_BLACK);
     tft.setCursor(22, urlY);
     tft.printf("http://%s.local", otaHostname);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.printf(" or");
     urlY += 24;
   }
 
@@ -1327,12 +1328,12 @@ void drawConfigScreenBase(int16_t col1X, int16_t col2X, int16_t tileW,
   tft.fillRoundRect(setupX + 2, btnY + 2, btnW - 4, btnH - 4, 5, TFT_NAVY);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_WHITE, TFT_NAVY);
-  tft.drawString("Setup", setupX + (btnW / 2), btnY + (btnH / 2), 2);
+  tft.drawString("WiFi", setupX + (btnW / 2), btnY + (btnH / 2), 2);
 
   tft.drawRoundRect(updateX, btnY, btnW, btnH, 6, TFT_CYAN);
   tft.fillRoundRect(updateX + 2, btnY + 2, btnW - 4, btnH - 4, 5, TFT_NAVY);
   tft.setTextColor(TFT_WHITE, TFT_NAVY);
-  tft.drawString("Update", updateX + (btnW / 2), btnY + (btnH / 2), 2);
+  tft.drawString("Settings", updateX + (btnW / 2), btnY + (btnH / 2), 2);
 
   tft.drawRoundRect(startX, btnY, btnW, btnH, 6, TFT_GREEN);
   tft.fillRoundRect(startX + 2, btnY + 2, btnW - 4, btnH - 4, 5, TFT_DARKGREEN);
@@ -1687,7 +1688,7 @@ void drawSetupPortalScreen(const String &apName, bool showTimeoutHint)
   tft.drawFastHLine(0, 26, SCREEN_W, TFT_CYAN);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_WHITE, TFT_NAVY);
-  tft.drawString("Setup & Configure", SCREEN_W / 2, 13, 2);
+  tft.drawString("Change WiFi Network", SCREEN_W / 2, 13, 2);
 
   // Styled instruction card
   tft.drawRoundRect(8, 34, 304, 172, 8, TFT_DARKCYAN);
@@ -1740,7 +1741,7 @@ void drawSetupPortalScreen(const String &apName, bool showTimeoutHint)
   tft.setCursor(16, y);
   tft.print("5.");
   tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.print(" Enter Wi-Fi password & holiday info");
+  tft.print(" Enter Wi-Fi password");
   y += step;
 
   tft.setTextColor(TFT_CYAN, TFT_BLACK);
@@ -1965,19 +1966,28 @@ void displaySSIDAndWhen()
     tft.drawString(WiFi.SSID(), 23, midY, 2);
   }
 
-  // Only show target holiday date/time on the bottom right if the countdown hasn't elapsed yet
+  // Show target holiday date/time before departure, or "Day X of Holiday" once arrived
   time_t nowEpoch = time(nullptr);
-  bool timerElapsed = (nowEpoch > 1700000000L) && (difftime(rawhol, nowEpoch) <= 0);
-
-  if (!timerElapsed)
+  if (nowEpoch > 1700000000L)
   {
-    tft.setTextColor(TFT_GREEN, TFT_BLACK);
-    tft.setTextDatum(MR_DATUM);
-    tft.drawString(formatPrettyDateTime(rawhol), SCREEN_W - 2, midY, 2);
+    double elapsedSecs = difftime(nowEpoch, rawhol);
+    if (elapsedSecs < 0)
+    {
+      tft.setTextColor(TFT_GREEN, TFT_BLACK);
+      tft.setTextDatum(MR_DATUM);
+      tft.drawString(formatPrettyDateTime(rawhol), SCREEN_W - 2, midY, 2);
+    }
+    else
+    {
+      int holidayDayNum = ((int)elapsedSecs / 86400) + 1;
+      String dayLabel = "Day " + String(holidayDayNum); 
+      tft.setTextColor(TFT_GOLD, TFT_BLACK);
+      tft.setTextDatum(MR_DATUM);
+      tft.drawString(dayLabel, SCREEN_W - 2, midY, 2);
+    }
   }
   tft.setTextDatum(TL_DATUM);
 }
-
 void wakeFromScreenSaver(bool isArrived)
 {
   inScreenSaver = false;
@@ -2409,6 +2419,7 @@ void loop()
 {
   static time_t lastRenderedSec = 0;
   static bool blinkState = false;
+  static int lastHolidayDayShown = -1;
 
   otaServer.handleClient();
   if (otaInProgress)
@@ -2609,6 +2620,18 @@ void loop()
     if (isArrived)
     {
       diffSecs = 0;
+
+      // Refresh the bottom-right "Day X of Holiday" label whenever the day number changes
+      int currentHolidayDay = ((int)difftime(rawlocal, rawhol) / 86400) + 1;
+      if (currentHolidayDay != lastHolidayDayShown)
+      {
+        lastHolidayDayShown = currentHolidayDay;
+        if (!inDimClockMode && !inScreenSaver && !isWeatherPopupOpen && !isBirthdayPopupOpen)
+        {
+          displaySSIDAndWhen();
+        }
+      }
+
       if (!holidayCelebrated)
       {
         holidayCelebrated = true;
@@ -2648,6 +2671,5 @@ void loop()
       }
     }
   }
-
   delay(25);
 }
