@@ -2566,6 +2566,9 @@ void loop()
         tone(AZTOUCH_BEEPER, 520, 45);
         delay(50);
         tone(AZTOUCH_BEEPER, 330, 70);
+        updateScreenSaverEyes(false);
+        yield();
+        return;
       }
     }
     else

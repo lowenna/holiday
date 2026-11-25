@@ -317,7 +317,6 @@ static void renderHermitCrabFrame(float timeSec, int driftOffset)
 
     crabSpr.pushSprite(0, BAND_Y);
 }
-
 // Called when the user taps the screen while the screensaver is active.
 // Returns true if the screensaver should EXIT (second tap while hiding/peeking),
 // or false if the crab was startled into hiding (first tap).
@@ -334,7 +333,12 @@ bool handleScreenSaverTap()
     else
     {
         crabState = CRAB_WALKING;
-        return true; // Wake up!
+        if (crabSprReady)
+        {
+            crabSpr.deleteSprite();
+            crabSprReady = false;
+        }
+        return true; // Wake up and free sprite RAM for main UI!
     }
 }
 
