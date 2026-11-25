@@ -220,7 +220,7 @@ void handleOTAUpload()
   if (upload.status == UPLOAD_FILE_START)
   {
     Serial.printf("OTA Update Start: %s\n", upload.filename.c_str());
-    otaInProgress = false; // Ensure drawOtaProgressScreen initializes the header & card
+    otaInProgress = false; // Force drawOtaProgressScreen to draw the header & card
     lastOtaPct = -1;
     otaExpectedSize = otaServer.hasHeader("Content-Length")
                           ? (size_t)otaServer.header("Content-Length").toInt()
