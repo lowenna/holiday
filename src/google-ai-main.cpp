@@ -164,6 +164,8 @@ bool isBirthdayPopupOpen = false;
 unsigned long birthdayPopupOpenedMs = 0;
 bool triggerTestBirthday = false;
 bool triggerTestScreensaver = false;
+String pendingCloudOtaUrl = "";
+
 time_t rawhol = 0;
 
 // ============================================================================
@@ -382,70 +384,6 @@ bool setupOTA()
     <div id="otaStatus"></div>
   </div>
   <script>
-    document.getElementById('testBdayBtn').addEventListener('click', function() {
-      const bStatus = document.getElementById('bdayStatus');
-      bStatus.textContent = 'Showing birthday preview on screen...';
-      fetch('/testbday', { method: 'POST' })
-        .then(function(r) { return r.text(); })
-        .then(function(txt) { bStatus.textContent = txt; })
-        .catch(function() { bStatus.textContent = 'Triggered!'; });
-    });
-
-    document.getElementById('testSsaverBtn').addEventListener('click', function() {
-      const sStatus = document.getElementById('ssaverStatus');
-      sStatus.textContent = 'Starting hermit crab screensaver...';
-      fetch('/testssaver', { method: 'POST' })
-        .then(function(r) { return r.text(); })
-        .then(function(txt) { sStatus.textContent = txt; })
-        .catch(function() { sStatus.textContent = 'Triggered!'; });
-    });
-
-    const fwInput = document.getElementById('fwFile');
-    const statusEl = document.getElementById('otaStatus');
-    const progWrap = document.getElementById('progWrap');
-    const progBar = document.getElementById('progBar');
-
-    document.getElementById('otaForm').addEventListener('submit', function(e) {
-      e.preventDefault();
-      if (!fwInput.files || fwInput.files.length === 0) {
-        statusEl.textContent = 'Please select an update file (.bin) first.';
-        return;
-      }
-      const formData = new FormData();
-      formData.append('update', fwInput.files[0]);
-
-      progWrap.style.display = 'block';
-      progBar.style.width = '0%';
-      statusEl.textContent = 'Uploading update...';
-      document.getElementById('uploadBtn').disabled = true;
-
-
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', '/update', true);
-      xhr.upload.onprogress = function(ev) {
-        if (ev.lengthComputable) {
-          const pct = Math.round((ev.loaded / ev.total) * 100);
-          progBar.style.width = pct + '%';
-          statusEl.textContent = 'Uploading: ' + pct + '%';
-        }
-      };
-      xhr.onload = function() {
-        if (xhr.status === 200) {
-          progBar.style.width = '100%';
-          statusEl.textContent = 'Update complete! Restarting device...';
-          setTimeout(function() { location.reload(); }, 6000);
-        } else {
-          statusEl.textContent = 'Update failed (' + xhr.status + ')';
-          document.getElementById('uploadBtn').disabled = false;
-        }
-      };
-      xhr.onerror = function() {
-        statusEl.textContent = 'Upload complete or connection reset. Reloading...';
-        setTimeout(function() { location.reload(); }, 6000);
-      };
-      xhr.send(formData);
-    });
-  </script>
     const CURRENT_VER = ")rawliteral" + String(FW_VERSION) + R"rawliteral(";
     let cloudBinUrl = "";
 
@@ -496,6 +434,70 @@ bool setupOTA()
           setTimeout(function() { location.reload(); }, 15000);
         });
     });
+
+    document.getElementById('testBdayBtn').addEventListener('click', function() {
+      const bStatus = document.getElementById('bdayStatus');
+      bStatus.textContent = 'Showing birthday preview on screen...';
+      fetch('/testbday', { method: 'POST' })
+        .then(function(r) { return r.text(); })
+        .then(function(txt) { bStatus.textContent = txt; })
+        .catch(function() { bStatus.textContent = 'Triggered!'; });
+    });
+
+    document.getElementById('testSsaverBtn').addEventListener('click', function() {
+      const sStatus = document.getElementById('ssaverStatus');
+      sStatus.textContent = 'Starting hermit crab screensaver...';
+      fetch('/testssaver', { method: 'POST' })
+        .then(function(r) { return r.text(); })
+        .then(function(txt) { sStatus.textContent = txt; })
+        .catch(function() { sStatus.textContent = 'Triggered!'; });
+    });
+
+    const fwInput = document.getElementById('fwFile');
+    const statusEl = document.getElementById('otaStatus');
+    const progWrap = document.getElementById('progWrap');
+    const progBar = document.getElementById('progBar');
+
+    document.getElementById('otaForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      if (!fwInput.files || fwInput.files.length === 0) {
+        statusEl.textContent = 'Please select an update file (.bin) first.';
+        return;
+      }
+      const formData = new FormData();
+      formData.append('update', fwInput.files[0]);
+
+      progWrap.style.display = 'block';
+      progBar.style.width = '0%';
+      statusEl.textContent = 'Uploading update...';
+      document.getElementById('uploadBtn').disabled = true;
+
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/update', true);
+      xhr.upload.onprogress = function(ev) {
+        if (ev.lengthComputable) {
+          const pct = Math.round((ev.loaded / ev.total) * 100);
+          progBar.style.width = pct + '%';
+          statusEl.textContent = 'Uploading: ' + pct + '%';
+        }
+      };
+      xhr.onload = function() {
+        if (xhr.status === 200) {
+          progBar.style.width = '100%';
+          statusEl.textContent = 'Update complete! Restarting device...';
+          setTimeout(function() { location.reload(); }, 6000);
+        } else {
+          statusEl.textContent = 'Update failed (' + xhr.status + ')';
+          document.getElementById('uploadBtn').disabled = false;
+        }
+      };
+      xhr.onerror = function() {
+        statusEl.textContent = 'Upload complete or connection reset. Reloading...';
+        setTimeout(function() { location.reload(); }, 6000);
+      };
+      xhr.send(formData);
+    });
+  </script>
 </body>
 </html>
 )rawliteral";
@@ -512,6 +514,19 @@ bool setupOTA()
                {
     triggerTestScreensaver = true;
     otaServer.send(200, "text/plain", "Screensaver triggered!"); });
+
+  // Trigger a Cloud OTA update from GitHub
+  otaServer.on("/cloudota", HTTP_POST, []()
+               {
+    if (otaServer.hasArg("url"))
+    {
+      pendingCloudOtaUrl = otaServer.arg("url");
+      otaServer.send(200, "text/plain", "Cloud OTA starting");
+    }
+    else
+    {
+      otaServer.send(400, "text/plain", "Missing url");
+    } });
 
   // Handle Browser Settings Form Submission
   otaServer.on("/save", HTTP_POST, []()
@@ -594,6 +609,7 @@ bool setupOTA()
   Serial.printf("Setup at: http://%s.local (IP: %s)\n", otaHostname, WiFi.localIP().toString().c_str());
   return mdnsOk;
 }
+
 
 void drawOtaProgressScreen(const char *statusText, int percent)
 {
@@ -2668,6 +2684,14 @@ void loop()
     return;
   }
 
+  // Handle web dashboard "Install Cloud Update" button
+  if (pendingCloudOtaUrl.length() > 0)
+  {
+    String url = pendingCloudOtaUrl;
+    pendingCloudOtaUrl = "";
+    triggerCloudOTAFromWeb(url);
+  }
+
   // Automatic 08:30 destination local time birthday celebration (once per year)
   if (gBirthdayEnabled && isBirthdayToday(rawlocal))
   {
@@ -2697,7 +2721,6 @@ void loop()
       lastRenderedSec = 0;
     }
   }
-
   // Smoothly update PWM backlight & clock-only dim mode every loop tick (~40 Hz)
   updateAutoBacklight(isArrived);
 
@@ -2745,6 +2768,7 @@ void loop()
       updateScreenSaverEyes(false);
     }
   }
+
   // Wake from clock-only dim mode on any tap, absorbing the wake-up tap
   if (inDimClockMode && freshTap)
   {
@@ -2779,7 +2803,7 @@ void loop()
   {
     if (tx >= 255)
     {
-      tone(AZTOUCH_BEEPER, 880, 45);
+      tone(AZTOUCH_BEEPER, 880, 60);
       openInAppSetup();
       lastRenderedSec = 0;
       return;
