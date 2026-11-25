@@ -15,6 +15,9 @@
 #include "audio.h"
 #include "maldives.h" // Hexdump of 320x240 JPG background
 #include "NotoSansBold36.h"
+#include "fw_version.h"
+#include "ota_updater.h"
+
 
 /*
  AI Prompt
@@ -582,7 +585,7 @@ long getEffectiveDestOffsetSec()
 // ============================================================================
 // Touch, Audio & Display Helpers
 // ============================================================================
-static bool getTouchPixel(uint16_t &x, uint16_t &y)
+bool getTouchPixel(uint16_t &x, uint16_t &y)
 {
   if (!touch.touched())
     return false;
@@ -2374,6 +2377,7 @@ void setup()
   uint16_t bootTx, bootTy;
   bool userHeldScreen = getTouchPixel(bootTx, bootTy);
 
+  checkAndPromptFirmwareUpdate();
   if (userHeldScreen || gPrefStatus != PREF_VALID)
   {
     if (userHeldScreen)
