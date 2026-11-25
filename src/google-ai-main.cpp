@@ -1718,20 +1718,20 @@ enum BootStepState
 
 void drawBootWifiIcon(int cx, int cy, uint16_t col)
 {
-  tft.fillRect(cx - 18, cy - 18, 36, 36, TFT_BLACK);
-  // Concentric Wi-Fi signal arcs facing upwards (225 deg to 315 deg)
-  tft.drawArc(cx, cy + 10, 22, 19, 135, 225, col, TFT_BLACK);
-  tft.drawArc(cx, cy + 10, 15, 12, 135, 225, col, TFT_BLACK);
-  tft.drawArc(cx, cy + 10, 8, 5, 135, 225, col, TFT_BLACK);
+  const uint16_t cardBg = 0x18E3; // UI_CARD
+  tft.fillRect(cx - 18, cy - 18, 36, 36, cardBg);
+  tft.drawArc(cx, cy + 10, 22, 19, 135, 225, col, cardBg);
+  tft.drawArc(cx, cy + 10, 15, 12, 135, 225, col, cardBg);
+  tft.drawArc(cx, cy + 10, 8, 5, 135, 225, col, cardBg);
   tft.fillCircle(cx, cy + 10, 3, col);
 }
 
 void drawBootClockIcon(int cx, int cy, uint16_t col)
 {
-  tft.fillRect(cx - 18, cy - 18, 36, 36, TFT_BLACK);
+  const uint16_t cardBg = 0x18E3; // UI_CARD
+  tft.fillRect(cx - 18, cy - 18, 36, 36, cardBg);
   tft.drawCircle(cx, cy, 15, col);
   tft.drawCircle(cx, cy, 14, col);
-  // Clock hands (10:10 position)
   tft.drawLine(cx, cy, cx - 6, cy - 6, col);
   tft.drawLine(cx + 1, cy, cx - 5, cy - 6, col);
   tft.drawLine(cx, cy, cx + 8, cy - 7, col);
@@ -1741,43 +1741,52 @@ void drawBootClockIcon(int cx, int cy, uint16_t col)
 
 void updateBootStepRow(int rowIndex, BootStepState state, const String &line1, const String &line2 = "")
 {
-  const int rowY = (rowIndex == 0) ? 58 : 138;
-  const int iconX = 48;
-  const int textX = 84;
+  const int16_t cardX = 10;
+  const int16_t cardW = SCREEN_W - 20;
+  const int16_t cardH = 66;
+  const int16_t cardY = (rowIndex == 0) ? 38 : 114;
+  const int16_t rowCenterY = cardY + (cardH / 2);
+  const int16_t iconX = 44;
+  const int16_t textX = 78;
 
-  uint16_t iconCol = TFT_DARKGREY;
-  uint16_t titleCol = TFT_SILVER;
-  uint16_t subCol = TFT_LIGHTGREY;
+  uint16_t cardBorder = 0x39E7; // UI_BORDER
+  uint16_t iconCol    = 0x9CD3; // UI_TEXT_MUTED
+  uint16_t titleCol   = TFT_SILVER;
+  uint16_t subCol     = 0x9CD3;
 
   if (state == BOOT_STEP_ACTIVE)
   {
-    iconCol = TFT_CYAN;
-    titleCol = TFT_WHITE;
-    subCol = TFT_CYAN;
+    cardBorder = 0x02B0; // UI_ACCENT_DK
+    iconCol    = 0x067F; // UI_ACCENT
+    titleCol   = TFT_WHITE;
+    subCol     = 0x067F; // UI_ACCENT
   }
   else if (state == BOOT_STEP_WARN)
   {
-    iconCol = TFT_YELLOW;
-    titleCol = TFT_YELLOW;
-    subCol = TFT_WHITE;
+    cardBorder = TFT_ORANGE;
+    iconCol    = TFT_YELLOW;
+    titleCol   = TFT_YELLOW;
+    subCol     = TFT_WHITE;
   }
   else if (state == BOOT_STEP_DONE)
   {
-    iconCol = TFT_GREEN;
-    titleCol = TFT_GREEN;
-    subCol = TFT_GREEN;
+    cardBorder = 0x0386; // UI_SUCCESS_DK
+    iconCol    = 0x07E8; // UI_SUCCESS
+    titleCol   = 0x07E8; // UI_SUCCESS
+    subCol     = TFT_WHITE;
   }
 
-  // Clear text area for clean redraws
-  tft.fillRect(textX - 4, rowY - 22, SCREEN_W - textX, 48, TFT_BLACK);
+  // Draw or refresh the elevated dark-slate card
+  tft.fillRoundRect(cardX, cardY, cardW, cardH, 8, 0x18E3); // UI_CARD
+  tft.drawRoundRect(cardX, cardY, cardW, cardH, 8, cardBorder);
 
   if (rowIndex == 0)
   {
-    drawBootWifiIcon(iconX, rowY, iconCol);
+    drawBootWifiIcon(iconX, rowCenterY, iconCol);
   }
   else
   {
-    drawBootClockIcon(iconX, rowY, iconCol);
+    drawBootClockIcon(iconX, rowCenterY, iconCol);
   }
 
   tft.setFreeFont(nullptr);
@@ -1787,21 +1796,21 @@ void updateBootStepRow(int rowIndex, BootStepState state, const String &line1, c
 
   if (line2.length() > 0)
   {
-    tft.setTextColor(titleCol, TFT_BLACK);
-    tft.drawString(line1, textX, rowY - 17, 2);
-    tft.setTextColor(subCol, TFT_BLACK);
-    tft.drawString(line2, textX, rowY + 3, 2);
+    tft.setTextColor(titleCol, 0x18E3);
+    tft.drawString(line1, textX, rowCenterY - 17, 2);
+    tft.setTextColor(subCol, 0x18E3);
+    tft.drawString(line2, textX, rowCenterY + 3, 2);
   }
   else
   {
-    tft.setTextColor(titleCol, TFT_BLACK);
-    tft.drawString(line1, textX, rowY - 8, 2);
+    tft.setTextColor(titleCol, 0x18E3);
+    tft.drawString(line1, textX, rowCenterY - 8, 2);
   }
 }
 
 void drawBootWelcomeScreen(const String &savedSsid)
 {
-  tft.fillScreen(TFT_BLACK);
+  drawModernHeader("Starting Up");
 
   if (savedSsid.length() > 0)
   {
@@ -1814,9 +1823,11 @@ void drawBootWelcomeScreen(const String &savedSsid)
 
   updateBootStepRow(1, BOOT_STEP_PENDING, "Waiting for network...", "Time sync pending");
 
+  // Bottom divider & subtle touch hint matching the configuration screens
+  tft.drawFastHLine(10, 192, SCREEN_W - 20, 0x39E7);
   tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
-  tft.drawString("Touch & hold screen for Settings", SCREEN_W / 2, 224, 1);
+  tft.setTextColor(0x9CD3, 0x0000);
+  tft.drawString("Touch & hold screen for Settings", SCREEN_W / 2, 214, 2);
   tft.setTextDatum(TL_DATUM);
 }
 
@@ -2469,7 +2480,7 @@ void setup()
     }
 
     // Re-draw minimal boot screen with green Wi-Fi row before starting NTP sync
-    tft.fillScreen(TFT_BLACK);
+    drawModernHeader("Starting Up");
     updateBootStepRow(0, BOOT_STEP_DONE, "Connected to Wi-Fi", WiFi.SSID());
   }
   else
