@@ -1592,110 +1592,119 @@ String getSavedWifiSSID()
   return "";
 }
 
+// ============================================================================
+// Minimal Boot Status Screen (Wi-Fi & NTP Sync with Icons + Progressive Dots)
+// ============================================================================
+enum BootStepState
+{
+  BOOT_STEP_PENDING,
+  BOOT_STEP_ACTIVE,
+  BOOT_STEP_WARN,
+  BOOT_STEP_DONE
+};
+
+void drawBootWifiIcon(int cx, int cy, uint16_t col)
+{
+  tft.fillRect(cx - 18, cy - 18, 36, 36, TFT_BLACK);
+  // Concentric Wi-Fi signal arcs facing upwards (225 deg to 315 deg)
+  tft.drawArc(cx, cy + 10, 22, 19, 135, 225, col, TFT_BLACK);
+  tft.drawArc(cx, cy + 10, 15, 12, 135, 225, col, TFT_BLACK);
+  tft.drawArc(cx, cy + 10, 8, 5, 135, 225, col, TFT_BLACK);
+  tft.fillCircle(cx, cy + 10, 3, col);
+}
+
+void drawBootClockIcon(int cx, int cy, uint16_t col)
+{
+  tft.fillRect(cx - 18, cy - 18, 36, 36, TFT_BLACK);
+  tft.drawCircle(cx, cy, 15, col);
+  tft.drawCircle(cx, cy, 14, col);
+  // Clock hands (10:10 position)
+  tft.drawLine(cx, cy, cx - 6, cy - 6, col);
+  tft.drawLine(cx + 1, cy, cx - 5, cy - 6, col);
+  tft.drawLine(cx, cy, cx + 8, cy - 7, col);
+  tft.drawLine(cx, cy + 1, cx + 8, cy - 6, col);
+  tft.fillCircle(cx, cy, 2, col);
+}
+
+void updateBootStepRow(int rowIndex, BootStepState state, const String &line1, const String &line2 = "")
+{
+  const int rowY = (rowIndex == 0) ? 58 : 138;
+  const int iconX = 48;
+  const int textX = 84;
+
+  uint16_t iconCol = TFT_DARKGREY;
+  uint16_t titleCol = TFT_SILVER;
+  uint16_t subCol = TFT_LIGHTGREY;
+
+  if (state == BOOT_STEP_ACTIVE)
+  {
+    iconCol = TFT_CYAN;
+    titleCol = TFT_WHITE;
+    subCol = TFT_CYAN;
+  }
+  else if (state == BOOT_STEP_WARN)
+  {
+    iconCol = TFT_YELLOW;
+    titleCol = TFT_YELLOW;
+    subCol = TFT_WHITE;
+  }
+  else if (state == BOOT_STEP_DONE)
+  {
+    iconCol = TFT_GREEN;
+    titleCol = TFT_GREEN;
+    subCol = TFT_GREEN;
+  }
+
+  // Clear text area for clean redraws
+  tft.fillRect(textX - 4, rowY - 22, SCREEN_W - textX, 48, TFT_BLACK);
+
+  if (rowIndex == 0)
+  {
+    drawBootWifiIcon(iconX, rowY, iconCol);
+  }
+  else
+  {
+    drawBootClockIcon(iconX, rowY, iconCol);
+  }
+
+  tft.setFreeFont(nullptr);
+  tft.setTextFont(2);
+  tft.setTextSize(1);
+  tft.setTextDatum(TL_DATUM);
+
+  if (line2.length() > 0)
+  {
+    tft.setTextColor(titleCol, TFT_BLACK);
+    tft.drawString(line1, textX, rowY - 17, 2);
+    tft.setTextColor(subCol, TFT_BLACK);
+    tft.drawString(line2, textX, rowY + 3, 2);
+  }
+  else
+  {
+    tft.setTextColor(titleCol, TFT_BLACK);
+    tft.drawString(line1, textX, rowY - 8, 2);
+  }
+}
+
 void drawBootWelcomeScreen(const String &savedSsid)
 {
   tft.fillScreen(TFT_BLACK);
 
-  // Welcome Header Bar
-  tft.fillRect(0, 0, SCREEN_W, 24, TFT_NAVY);
-  tft.drawFastHLine(0, 24, SCREEN_W, TFT_CYAN);
-  tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(TFT_WHITE, TFT_NAVY);
-  tft.drawString("Holiday Countdown", SCREEN_W / 2, 12, 2);
-
-  // Preferences Card (y = 30..136)
-  tft.drawRoundRect(8, 30, SCREEN_W - 16, 106, 8, TFT_DARKCYAN);
-  tft.setTextDatum(TL_DATUM);
-  tft.setTextFont(2);
-  tft.setTextSize(1);
-
-  tft.setTextColor(TFT_CYAN, TFT_BLACK);
-  tft.setCursor(16, 34);
-  tft.print("Holiday Preferences:");
-
-  if (gPrefStatus == PREF_VALID)
-  {
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.setCursor(16, 53);
-    tft.printf("Destination: %s", gWhere);
-
-    tft.setCursor(16, 72);
-    tft.printf("Departure:   %s/%s/%s at %s:%s", gDay, gMonth, gYear, gHour, gMins);
-
-    tft.setCursor(16, 91);
-    tft.print("Birthday:    ");
-    if (gBirthdayEnabled)
-    {
-      tft.setTextColor(TFT_GREEN, TFT_BLACK);
-      tft.printf("Enabled (%02d/%02d)", gBdayDay, gBdayMonth);
-    }
-    else
-    {
-      tft.setTextColor(TFT_SILVER, TFT_BLACK);
-      tft.printf("Disabled (%02d/%02d)", gBdayDay, gBdayMonth);
-    }
-
-    tft.setTextColor(TFT_GREEN, TFT_BLACK);
-    tft.setCursor(16, 111);
-    tft.print("Status: Configured");
-  }
-  else if (gPrefStatus == PREF_NOT_CONFIGURED)
-  {
-    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-    tft.setCursor(16, 56);
-    tft.print("Status: Not yet configured");
-
-    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-    tft.setCursor(16, 78);
-    tft.printf("Default: %s (%s/%s/%s)", gWhere, gDay, gMonth, gYear);
-
-    tft.setCursor(16, 100);
-    tft.printf("Birthday: %s (%02d/%02d)", gBirthdayEnabled ? "Enabled" : "Disabled", gBdayDay, gBdayMonth);
-  }
-  else
-  {
-    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-    tft.setCursor(16, 62);
-    tft.print("Status: Setup needed");
-
-    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-    tft.setCursor(16, 86);
-    tft.print("Use Settings below to set your trip");
-  }
-
-  // Wi-Fi Connection Status Card (y = 142..234)
-  tft.drawRoundRect(8, 142, SCREEN_W - 16, 92, 8, TFT_DARKGREY);
-  tft.setTextColor(TFT_CYAN, TFT_BLACK);
-  tft.setCursor(16, 148);
-  tft.print("Wi-Fi Status:");
-
   if (savedSsid.length() > 0)
   {
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.setCursor(16, 169);
-    tft.print("Attempting to connect to: ");
-    tft.setTextColor(TFT_GREEN, TFT_BLACK);
-    tft.print(savedSsid);
-
-    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-    tft.setCursor(16, 192);
-    tft.print("Please wait...");
+    updateBootStepRow(0, BOOT_STEP_ACTIVE, "Connecting to Wi-Fi", savedSsid + ".");
   }
   else
   {
-    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-    tft.setCursor(16, 169);
-    tft.print("No saved Wi-Fi network found.");
-
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
-    tft.setCursor(16, 192);
-    tft.printf("Starting hotspot %s...", otaHostname);
+    updateBootStepRow(0, BOOT_STEP_WARN, "No saved Wi-Fi", "Starting " + String(otaHostname) + "...");
   }
-  tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-  tft.drawString("Touch & hold screen for Settings", SCREEN_W / 2, 222, 1);
-  tft.setTextDatum(TL_DATUM);
 
+  updateBootStepRow(1, BOOT_STEP_PENDING, "Waiting for network...", "Time sync pending");
+
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  tft.drawString("Touch & hold screen for Settings", SCREEN_W / 2, 224, 1);
+  tft.setTextDatum(TL_DATUM);
 }
 
 void drawSetupPortalScreen(const String &apName, bool showTimeoutHint)
@@ -2198,39 +2207,40 @@ void openInAppSetup()
 // ============================================================================
 void setup()
 {
-  LcarsAudio::begin(AZTOUCH_BEEPER);
-  LcarsAudio::beepBoot();
-  unsigned long bootStart = millis();
-  while (millis() - bootStart < 400)
-  {
-    LcarsAudio::update();
-  }
-
-  Serial.begin(115200);
-
-  // Initialize display & touchscreen
+  // 1. Wake display & turn on backlight FIRST so user gets instant visual feedback
   tft.init();
   initBacklightPWM();
   tft.setRotation(1);
   tft.fillScreen(TFT_BLACK);
   tft.setSwapBytes(true);
 
+  initHostname();
+  WiFi.mode(WIFI_STA);
+  String savedSsid = getSavedWifiSSID();
+  drawBootWelcomeScreen(savedSsid);
+
+  // 2. Play boot chime right after the screen is visible
+  LcarsAudio::begin(AZTOUCH_BEEPER);
+  LcarsAudio::beepBoot();
+  unsigned long bootStart = millis();
+  int bootDotStep = 1;
+  while (millis() - bootStart < 400)
+  {
+    LcarsAudio::update();
+    if (savedSsid.length() > 0 && (millis() - bootStart) > (unsigned long)(bootDotStep * 130))
+    {
+      bootDotStep++;
+      String dots = (bootDotStep == 2) ? ".." : "...";
+      updateBootStepRow(0, BOOT_STEP_ACTIVE, "Connecting to Wi-Fi", savedSsid + dots);
+    }
+  }
+
+  Serial.begin(115200);
   touch.begin();
   touch.setRotation(1);
 
-  // 1. Build "holiday-xxxx" hostname immediately so AP never defaults to "ESP_xxxxxx"
-  initHostname();
-
-  // 2. Load & validate saved holiday preferences
+  // 3. Load & validate saved holiday preferences
   readPreferences();
-
-  // 3. Read stored Wi-Fi SSID from NVS before attempting connection
-  WiFi.mode(WIFI_STA);
-  String savedSsid = getSavedWifiSSID();
-
-  // 4. Display Welcome Screen with Preferences & target Wi-Fi network
-  drawBootWelcomeScreen(savedSsid);
-  delay(2000); // Allow user time to read welcome & preferences screen
 
   WiFiManagerParameter custom_hol_hour("hour", "Hour (0-23)", gHour, 2);
   WiFiManagerParameter custom_hol_mins("mins", "Mins (0-59)", gMins, 2);
@@ -2254,7 +2264,7 @@ void setup()
   wifiManager.addParameter(&custom_hol_year);
   wifiManager.addParameter(&custom_hol_where);
 
-    // 5. Connect to saved Wi-Fi (12s timeout), or start non-blocking AP named "holiday-xxxx"
+  // 4. Connect to saved Wi-Fi (12s timeout), or start non-blocking AP named "holiday-xxxx"
   wifiManager.setConnectTimeout(12);
   wifiManager.setConnectRetries(2);
   bool wifiConnected = wifiManager.autoConnect(otaHostname);
@@ -2287,7 +2297,7 @@ void setup()
 
   wifiManager.setConfigPortalBlocking(true);
 
-  // 6. Start OTA; only show the 10s Settings screen if unconfigured or user holds the screen
+  // 5. Start OTA; only show the 10s Settings screen if unconfigured or user holds the screen
   bool mdnsOk = setupOTA();
   bool portalRan = false;
   bool portalTimedOut = false;
@@ -2310,7 +2320,6 @@ void setup()
       String apName = String(otaHostname);
       drawSetupPortalScreen(apName, false);
 
-      // Run config portal non-blocking with live MM:SS countdown
       wifiManager.setConfigPortalBlocking(false);
       wifiManager.startConfigPortal(apName.c_str());
 
@@ -2323,19 +2332,20 @@ void setup()
       if (portalCancelled)
       {
         portalRan = false;
-        continue; // Return to the toggle buttons screen
+        continue;
       }
       break;
     }
 
-    tft.fillScreen(TFT_BLACK); // Only clear if the Settings UI was shown
+    // Re-draw minimal boot screen so the green Wi-Fi & NTP steps are clearly visible
+    tft.fillScreen(TFT_BLACK);
   }
   else
   {
     Serial.println("Preferences valid & no touch held; skipping 10s boot config screen.");
   }
 
-  // 7. Save updated holiday details if changed OR if portal was submitted before timing out
+  // 6. Save updated holiday details if changed OR if portal was submitted before timing out
   if (shouldSaveConfig || (portalRan && !portalTimedOut))
   {
     writePreferences(
@@ -2347,51 +2357,38 @@ void setup()
         custom_hol_where.getValue());
   }
 
-  // 8. Sync NTP time (updating the Welcome screen status card in-place)
+  // 7. Turn Wi-Fi step GREEN, then sync NTP time with animated progressive dots
+  updateBootStepRow(0, BOOT_STEP_DONE, "Connected to Wi-Fi", WiFi.SSID());
   configTzTime(MY_TZ, "pool.ntp.org", "time.nist.gov");
-
-  if (!userHeldScreen && gPrefStatus == PREF_VALID)
-  {
-    // Welcome screen is still visible — update its bottom Wi-Fi card cleanly in-place
-    tft.fillRect(14, 166, SCREEN_W - 28, 44, TFT_BLACK);
-    tft.setTextFont(2);
-    tft.setTextSize(1);
-    tft.setTextDatum(TL_DATUM);
-    tft.setTextColor(TFT_GREEN, TFT_BLACK);
-    tft.setCursor(16, 169);
-    tft.printf("Connected to %s", WiFi.SSID().c_str());
-
-    tft.setTextColor(TFT_CYAN, TFT_BLACK);
-    tft.setCursor(16, 190);
-    tft.print("Setting the clock...");
-  }
-  else
-  {
-    // Screen was cleared after Settings UI — show a clean centred status message
-    tft.setTextFont(2);
-    tft.setTextSize(1);
-    tft.setTextColor(TFT_CYAN, TFT_BLACK);
-    tft.setCursor(16, 100);
-    tft.print("Getting current time from the Internet");
-  }
 
   struct tm timeinfo;
   int retry = 0;
-  while (!getLocalTime(&timeinfo, 500) && retry < 10)
+  while (!getLocalTime(&timeinfo, 400) && retry < 12)
   {
-    Serial.println("Waiting for NTP time sync...");
-    tft.print(".");
+    String dots = "";
+    int dotCount = (retry % 3) + 1;
+    for (int d = 0; d < dotCount; d++)
+      dots += ".";
+    updateBootStepRow(1, BOOT_STEP_ACTIVE, "Getting Internet time" + dots, "Syncing UK clock (GMT/BST)");
     retry++;
   }
 
-  if (retry >= 10)
+  if (retry >= 12)
   {
-    showScreenError("NTP TIME WARNING", "Could not sync time with NTP servers yet.\nWill keep retrying in background...", true, 2500);
+    updateBootStepRow(1, BOOT_STEP_WARN, "Time sync delayed", "Retrying in background...");
+    delay(1500);
+  }
+  else
+  {
+    char timeReadyBuf[24];
+    snprintf(timeReadyBuf, sizeof(timeReadyBuf), "Synced: %02d:%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+    updateBootStepRow(1, BOOT_STEP_DONE, "Internet time synced", String(timeReadyBuf));
+    delay(650); // Brief pause so user sees both green icons before main screen opens
   }
 
   tft.fillScreen(TFT_BLACK);
 
-  // 9. Calculate target holiday timestamp
+  // 8. Calculate target holiday timestamp
   struct tm holtimeinfo = {};
   holtimeinfo.tm_hour = atoi(gHour);
   holtimeinfo.tm_min = atoi(gMins);
@@ -2406,16 +2403,14 @@ void setup()
     showScreenError("DATE ERROR", "Could not parse holiday target date.\nPlease re-run setup.", true, 4000);
   }
 
-  // 10. Render static UI elements & persistent sprites immediately (weather loads right after on first loop tick)
+  // 9. Render static UI elements & persistent sprites immediately
   initSprites();
   displaySSIDAndWhen();
   drawStaticBackgroundImage();
   displayLines();
   drawWhere(false);
 
-  // Force loop() to fetch initial weather immediately after rendering the countdown
   lastWeatherFetchMs = millis() - WEATHER_INTERVAL_MS;
-
   lastInteractionMillis = millis();
   lastBacklightBoostMs = millis();
 
