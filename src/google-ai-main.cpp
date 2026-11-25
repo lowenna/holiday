@@ -21,7 +21,7 @@
  You've been helping me with this project. I'm not including all files, but the main
  ones for now can be at
 
- https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/src/google-ai-main.cpp and
+ https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/src/google-ai-main.cpp
  https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/src/weather.cpp
  https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/src/audio.cpp
  https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/src/eyes.cpp
@@ -29,9 +29,7 @@
  https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/platformio.ini
  
  
- https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/user_setup.h
-
- Can you confirm you can see these files. If so, please confirm what they do so I can be sure
+  Can you confirm you can see these files. If so, please confirm what they do so I can be sure
  you can help me update it. 
  
  The target device is an ESP32 AZ-Delivery DevKit V4 with a 2.8" AZ-Touch MOD display. 
@@ -128,6 +126,7 @@ bool gWeatherEnabled = true;
 bool gDimmerEnabled = true;
 bool gIslandPlusOne = false;
 bool gBirthdayEnabled = false;
+bool gRainAsPercent = true;
 int gBdayMonth = 1;
 int gBdayDay = 1;
 int gLastCelebratedBdayYear = -1;
@@ -299,12 +298,14 @@ bool setupOTA()
       <label class="field">Birthday Date (Ignore year)</label>
       <input type="date" name="bday" value=")rawliteral" + String(bdayBuf) + R"rawliteral(">
 
+      // Inside otaServer.on("/", HTTP_GET, ...), replace the <div class="grid"> block with:
       <div class="grid">
         <label class="chk"><input type="checkbox" name="ssaver" value="1" )rawliteral" + String(gScreensaverEnabled ? "checked" : "") + R"rawliteral(>Screensaver</label>
         <label class="chk"><input type="checkbox" name="dim" value="1" )rawliteral" + String(gDimmerEnabled ? "checked" : "") + R"rawliteral(>Dimmer</label>
         <label class="chk"><input type="checkbox" name="wxen" value="1" )rawliteral" + String(gWeatherEnabled ? "checked" : "") + R"rawliteral(>Weather</label>
         <label class="chk"><input type="checkbox" name="isl1h" value="1" )rawliteral" + String(gIslandPlusOne ? "checked" : "") + R"rawliteral(>Island +1h</label>
         <label class="chk"><input type="checkbox" name="bdayen" value="1" )rawliteral" + String(gBirthdayEnabled ? "checked" : "") + R"rawliteral(>Birthday</label>
+        <label class="chk"><input type="checkbox" name="rainpct" value="1" )rawliteral" + String(gRainAsPercent ? "checked" : "") + R"rawliteral(>Rain as %</label>
       </div>
 
       <button type="submit">Save &amp; Reboot</button>
@@ -416,12 +417,13 @@ bool setupOTA()
       return;
     }
 
-    // Save toggle switches & birthday date to NVS first
+        // Save toggle switches & birthday date to NVS first
     gScreensaverEnabled = otaServer.hasArg("ssaver");
     gDimmerEnabled = otaServer.hasArg("dim");
     gWeatherEnabled = otaServer.hasArg("wxen");
     gIslandPlusOne = otaServer.hasArg("isl1h");
     gBirthdayEnabled = otaServer.hasArg("bdayen");
+    gRainAsPercent = otaServer.hasArg("rainpct");
 
     if (bdayStr.length() >= 10)
     {
@@ -440,6 +442,7 @@ bool setupOTA()
     prefs.putBool("wxen", gWeatherEnabled);
     prefs.putBool("isl1h", gIslandPlusOne);
     prefs.putBool("bdayen", gBirthdayEnabled);
+    prefs.putBool("rainpct", gRainAsPercent);
     prefs.putInt("bdaym", gBdayMonth);
     prefs.putInt("bdayd", gBdayDay);
     prefs.putInt("bdayyr", -1); // Reset yearly trigger flag on settings save
@@ -1260,6 +1263,40 @@ void showWebUpdateInfoScreen(bool mdnsOk)
   }
 }
 
+
+// ============================================================================
+// Hostname, Preferences & Boot Status Display
+// ============================================================================
+enum PrefStatus
+{
+  PREF_NOT_CONFIGURED,
+  PREF_INVALID,
+  PREF_VALID
+};
+
+PrefStatus gPrefStatus = PREF_NOT_CONFIGURED;
+
+void initHostname()
+{
+  uint64_t chipId = ESP.getEfuseMac();
+  uint16_t shortId = (uint16_t)(chipId >> 32);
+  snprintf(otaHostname, sizeof(otaHostname), "holiday-%04x", shortId);
+}
+
+bool isValidDateTime(int hour, int mins, int day, int month, int year)
+{
+  if (hour < 0 || hour > 23)
+    return false;
+  if (mins < 0 || mins > 59)
+    return false;
+  if (month < 1 || month > 12)
+    return false;
+  if (day < 1 || day > 31)
+    return false;
+  if (year < 2024 || year > 2100)
+    return false;
+  return true;
+}
 void drawConfigScreenBase(int16_t col1X, int16_t col2X, int16_t tileW,
                           int16_t row1Y, int16_t row2Y, int16_t row3Y,
                           int16_t setupX, int16_t updateX, int16_t startX,
@@ -1283,6 +1320,7 @@ void drawConfigScreenBase(int16_t col1X, int16_t col2X, int16_t tileW,
   drawToggleTile(col2X, row2Y, tileW, "Island +1h", gIslandPlusOne);
 
   drawToggleTile(col1X, row3Y, tileW, "Birthday", gBirthdayEnabled);
+  drawToggleTile(col2X, row3Y, tileW, gRainAsPercent ? "Rain: %" : "Rain: mm", gRainAsPercent);
 
   // 3. Bottom Action Buttons: Setup | Update | Start (10s...)
   tft.drawRoundRect(setupX, btnY, btnW, btnH, 6, TFT_CYAN);
@@ -1313,9 +1351,8 @@ bool areWeConfiguring(bool mdnsOk)
   bool triggered = false;
   bool exitNow = false;
   int lastSecsLeft = -1;
-  bool wasTouching = true; // Ignore held finger until lifted
+  bool wasTouching = true;
 
-  // Toggle grid layout (y = 32..166)
   const int16_t col1X = 12;
   const int16_t col2X = 166;
   const int16_t tileW = 142;
@@ -1324,7 +1361,6 @@ bool areWeConfiguring(bool mdnsOk)
   const int16_t row3Y = 120;
   const int16_t tileH = 38;
 
-  // 3-Button Row layout (y = 172..204)
   const int16_t btnY = 172;
   const int16_t btnH = 32;
   const int16_t btnW = 94;
@@ -1424,13 +1460,27 @@ bool areWeConfiguring(bool mdnsOk)
         startAt = millis();
         lastSecsLeft = -1;
       }
+      // Row 3 Right: Rain % vs mm
+      else if (tx >= col2X && tx <= (col2X + tileW) && ty >= row3Y && ty <= (row3Y + tileH))
+      {
+        gRainAsPercent = !gRainAsPercent;
+        prefs.begin("hol", false);
+        prefs.putBool("rainpct", gRainAsPercent);
+        prefs.end();
+
+        drawToggleTile(col2X, row3Y, tileW, gRainAsPercent ? "Rain: %" : "Rain: mm", gRainAsPercent);
+        tone(AZTOUCH_BEEPER, gRainAsPercent ? 880 : 440, 80);
+
+        startAt = millis();
+        lastSecsLeft = -1;
+      }
       // Button 1: Setup
       else if (tx >= setupX && tx <= (setupX + btnW) && ty >= btnY && ty <= (btnY + btnH))
       {
         tone(AZTOUCH_BEEPER, 880, 60);
         triggered = true;
       }
-      // Button 2: Update (opens Web UI & OTA URLs sub-page)
+      // Button 2: Update
       else if (tx >= updateX && tx <= (updateX + btnW) && ty >= btnY && ty <= (btnY + btnH))
       {
         tone(AZTOUCH_BEEPER, 880, 60);
@@ -1441,7 +1491,7 @@ bool areWeConfiguring(bool mdnsOk)
         lastSecsLeft = -1;
         wasTouching = true;
       }
-      // Button 3: Start (10s...) — starts immediately when tapped
+      // Button 3: Start
       else if (tx >= startX && tx <= (startX + btnW) && ty >= btnY && ty <= (btnY + btnH))
       {
         tone(AZTOUCH_BEEPER, 1047, 60);
@@ -1454,40 +1504,6 @@ bool areWeConfiguring(bool mdnsOk)
 
   tft.fillScreen(TFT_BLACK);
   return triggered;
-}
-
-// ============================================================================
-// Hostname, Preferences & Boot Status Display
-// ============================================================================
-enum PrefStatus
-{
-  PREF_NOT_CONFIGURED,
-  PREF_INVALID,
-  PREF_VALID
-};
-
-PrefStatus gPrefStatus = PREF_NOT_CONFIGURED;
-
-void initHostname()
-{
-  uint64_t chipId = ESP.getEfuseMac();
-  uint16_t shortId = (uint16_t)(chipId >> 32);
-  snprintf(otaHostname, sizeof(otaHostname), "holiday-%04x", shortId);
-}
-
-bool isValidDateTime(int hour, int mins, int day, int month, int year)
-{
-  if (hour < 0 || hour > 23)
-    return false;
-  if (mins < 0 || mins > 59)
-    return false;
-  if (month < 1 || month > 12)
-    return false;
-  if (day < 1 || day > 31)
-    return false;
-  if (year < 2024 || year > 2100)
-    return false;
-  return true;
 }
 
 void readPreferences()
@@ -1504,6 +1520,7 @@ void readPreferences()
   gWeatherEnabled = prefs.getBool("wxen", true);
   gDimmerEnabled = prefs.getBool("dim", true);
   gIslandPlusOne = prefs.getBool("isl1h", false);
+  gRainAsPercent = prefs.getBool("rainpct", true);
   gBirthdayEnabled = prefs.getBool("bdayen", false);
   gBdayMonth = prefs.getInt("bdaym", 1);
   gBdayDay = prefs.getInt("bdayd", 1);

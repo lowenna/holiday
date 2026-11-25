@@ -8,6 +8,7 @@ extern TFT_eSPI tft;
 extern char gWhere[];
 extern bool gWeatherEnabled;
 extern bool gIslandPlusOne;
+extern bool gRainAsPercent;
 extern void fillSpriteWithMaldivesSlice(TFT_eSprite &spr, int16_t screenY, int16_t sliceH);
 extern void displaySSIDAndWhen();
 extern void drawStaticBackgroundImage();
@@ -19,7 +20,7 @@ int16_t WHERE_H = 26;
 
 static constexpr int16_t WX_SCREEN_W = 320;
 static constexpr int16_t HOURLY_Y = 91;
-static constexpr int16_t HOURLY_H = 61; // 51px unified card + 10px bottom strip for page dots
+static constexpr int16_t HOURLY_H = 61;
 
 String weatherTempStr = "";
 String weatherCondStr = "";
@@ -38,6 +39,7 @@ struct ForecastSlot
     int wmoCode;
     bool isDay;
     float precipMm;
+    int precipProb;
     bool valid;
 };
 
@@ -45,15 +47,48 @@ std::array<ForecastSlot, 24> hourlyForecast;
 std::array<ForecastSlot, 16> dailyForecast;
 int hourlyForecastCount = 0;
 int dailyForecastCount = 0;
-int forecastViewMode = 0; // 0 = Hrs 1-8, 1 = Hrs 9-16, 2 = Hrs 17-24, 3 = Days 1-8, 4 = Days 9-16
+int forecastViewMode = 0;
+
+// Page 1 Popup Metrics
 int weatherFeelsLikeC = 0;
 int weatherHumidityPct = 0;
 int weatherWindKmh = 0;
+int weatherWindDirDeg = 0;
 float weatherUvMax = 0.0f;
 String weatherSunriseStr = "--:--";
 String weatherSunsetStr = "--:--";
+
+// Page 2 Popup Metrics (Extended & Marine)
+int weatherWindGustsKmh = 0;
+int weatherCloudCoverPct = 0;
+int weatherPressureHpa = 0;
+float weatherSeaTempC = 0.0f;
+float weatherWaveHeightM = 0.0f;
+bool hasMarineData = false;
+
 bool isWeatherPopupOpen = false;
+int weatherPopupPage = 0; // 0 = Current & Sun, 1 = Marine & Atmosphere
 unsigned long weatherPopupOpenedMs = 0;
+
+String degToCompass(int deg)
+{
+    const char *dirs[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
+    int idx = (int)roundf(((deg % 360) / 45.0f)) % 8;
+    if (idx < 0) idx += 8;
+    return String(dirs[idx]);
+}
+
+String calcDaylightDuration(const String &rise, const String &set)
+{
+    if (rise.length() < 5 || set.length() < 5 || rise.startsWith("--") || set.startsWith("--"))
+        return "--h --m";
+    int rMins = rise.substring(0, 2).toInt() * 60 + rise.substring(3, 5).toInt();
+    int sMins = set.substring(0, 2).toInt() * 60 + set.substring(3, 5).toInt();
+    int diff = sMins - rMins;
+    if (diff < 0) diff += 1440;
+    return String(diff / 60) + "h " + String(diff % 60) + "m";
+}
+
 
 String wmoCodeToText(int code, bool isDay)
 {
@@ -287,17 +322,14 @@ void drawHourlyForecastBar()
     else if (forecastViewMode == 2)
         startIndex = 16;
 
-    // Opacity levels (0 = invisible, 255 = solid)
-    const uint8_t cardBgAlpha = 135; // ~53% frosted-glass tint for card interiors
-    const uint8_t detailAlpha = 225; // ~88% crisp visibility for borders, icons & text
+    const uint8_t cardBgAlpha = 135;
+    const uint8_t detailAlpha = 225;
 
-    // 1. Decode exact Maldives photo slice into the background sprite
     TFT_eSprite hSpr(&tft);
     hSpr.setColorDepth(16);
     hSpr.createSprite(WX_SCREEN_W, HOURLY_H);
     fillSpriteWithMaldivesSlice(hSpr, HOURLY_Y, HOURLY_H);
 
-    // 2. Draw the weather cards, icons & text onto a foreground sprite (TFT_BLACK = transparent)
     TFT_eSprite fgSpr(&tft);
     fgSpr.setColorDepth(16);
     fgSpr.createSprite(WX_SCREEN_W, HOURLY_H);
@@ -355,7 +387,6 @@ void drawHourlyForecastBar()
         int sx = startX + (i * slotW);
         int cx = sx + (slotW / 2);
 
-        // Individual rounded box for each hour/day
         fgSpr.fillRoundRect(sx + 1, 0, slotW - 2, boxH, 5, TFT_NAVY);
         fgSpr.drawRoundRect(sx + 1, 0, slotW - 2, boxH, 5, borderCol);
 
@@ -376,17 +407,28 @@ void drawHourlyForecastBar()
         fgSpr.drawCircle(tx + tw + 1, 29, 1, TFT_WHITE);
         fgSpr.setTextDatum(TC_DATUM);
 
-        // 4. Optional rainfall ("5mm") on rainy days in daily views
-        if (isDaily && slot.precipMm > 0.1f)
+        // 4. Rain Probability (%) or Rainfall (mm) on both Hourly & Daily cards
+        if (gRainAsPercent)
         {
-            int roundedMm = (int)roundf(slot.precipMm);
-            String pStr = (roundedMm >= 1) ? (String(roundedMm) + "mm") : "<1mm";
-            fgSpr.setTextColor(TFT_CYAN, TFT_NAVY);
-            fgSpr.drawString(pStr, cx, 39, 1);
+            if (slot.precipProb >= 10)
+            {
+                fgSpr.setTextColor(TFT_CYAN, TFT_NAVY);
+                fgSpr.drawString(String(slot.precipProb) + "%", cx, 39, 1);
+            }
+        }
+        else
+        {
+            if (slot.precipMm > 0.1f)
+            {
+                int roundedMm = (int)roundf(slot.precipMm);
+                String pStr = (roundedMm >= 1) ? (String(roundedMm) + "mm") : "<1mm";
+                fgSpr.setTextColor(TFT_CYAN, TFT_NAVY);
+                fgSpr.drawString(pStr, cx, 39, 1);
+            }
         }
     }
 
-    // 5. Page indicator dots centred below the boxes
+    // 5. Page indicator dots
     int hourlyPages = (hourlyForecastCount > 16) ? 3 : ((hourlyForecastCount > 8) ? 2 : ((hourlyForecastCount > 0) ? 1 : 0));
     int dailyPages = (dailyForecastCount > 8) ? 2 : ((dailyForecastCount > 0) ? 1 : 0);
     int totalPages = hourlyPages + dailyPages;
@@ -412,7 +454,6 @@ void drawHourlyForecastBar()
         }
     }
 
-    // 3. Blend foreground cards & icons over the Maldives background slice
     for (int16_t y = 0; y < HOURLY_H; y++)
     {
         for (int16_t x = 0; x < WX_SCREEN_W; x++)
@@ -421,7 +462,6 @@ void drawHourlyForecastBar()
             if (fgPix != TFT_BLACK)
             {
                 uint16_t bgPix = hSpr.readPixel(x, y);
-                // Card backgrounds (TFT_NAVY) blend softly; borders, icons & text stay sharp
                 uint8_t alpha = (fgPix == TFT_NAVY) ? cardBgAlpha : detailAlpha;
                 hSpr.drawPixel(x, y, tft.alphaBlend(alpha, fgPix, bgPix));
             }
@@ -429,14 +469,13 @@ void drawHourlyForecastBar()
     }
 
     fgSpr.deleteSprite();
-
     hSpr.pushSprite(0, HOURLY_Y);
     hSpr.deleteSprite();
 }
 
 void drawWeatherDetailPopup()
 {
-    const int16_t popW = 280;
+    const int16_t popW = 286;
     const int16_t popH = 166;
     const int16_t popX = (WX_SCREEN_W - popW) / 2;
     const int16_t popY = 38;
@@ -451,7 +490,9 @@ void drawWeatherDetailPopup()
     tft.setTextSize(1);
     tft.setTextDatum(MC_DATUM);
     tft.setTextColor(TFT_WHITE, TFT_DARKCYAN);
-    String title = String(gWhere) + " Weather";
+
+    String pageTag = (weatherPopupPage == 0) ? " (1/2)" : " (2/2)";
+    String title = String(gWhere) + " Weather" + pageTag;
     tft.drawString(title, popX + (popW / 2), popY + 14, 2);
 
     // Current temperature & condition summary
@@ -460,61 +501,98 @@ void drawWeatherDetailPopup()
     tft.drawString(summary, popX + (popW / 2), popY + 39, 2);
     tft.drawFastHLine(popX + 14, popY + 52, popW - 28, TFT_DARKCYAN);
 
-    // 2-Column Data Grid
     tft.setTextDatum(TL_DATUM);
-    const int16_t col1X = popX + 16;
+    const int16_t col1X = popX + 14;
     const int16_t col2X = popX + 148;
     int16_t rowY = popY + 60;
     const int16_t rowStep = 26;
 
-    // Row 1: Feels Like & Humidity
-    tft.setTextColor(TFT_SILVER, TFT_NAVY);
-    tft.drawString("Feels:", col1X, rowY, 2);
-    tft.setTextColor(TFT_WHITE, TFT_NAVY);
-    tft.drawString(String(weatherFeelsLikeC) + " C", col1X + 46, rowY, 2);
+    if (weatherPopupPage == 0)
+    {
+        // PAGE 1: Feels Like, Humidity, Wind + Compass, Max UV, Sunrise & Sunset
+        tft.setTextColor(TFT_SILVER, TFT_NAVY);
+        tft.drawString("Feels:", col1X, rowY, 2);
+        tft.setTextColor(TFT_WHITE, TFT_NAVY);
+        tft.drawString(String(weatherFeelsLikeC) + " C", col1X + 46, rowY, 2);
 
-    tft.setTextColor(TFT_SILVER, TFT_NAVY);
-    tft.drawString("Humid:", col2X, rowY, 2);
-    tft.setTextColor(TFT_CYAN, TFT_NAVY);
-    tft.drawString(String(weatherHumidityPct) + "%", col2X + 48, rowY, 2);
+        tft.setTextColor(TFT_SILVER, TFT_NAVY);
+        tft.drawString("Humid:", col2X, rowY, 2);
+        tft.setTextColor(TFT_CYAN, TFT_NAVY);
+        tft.drawString(String(weatherHumidityPct) + "%", col2X + 48, rowY, 2);
 
-    // Row 2: Wind Speed & UV Index
-    rowY += rowStep;
-    int windMph = (int)roundf(weatherWindKmh * 0.621371f);
-    tft.setTextColor(TFT_SILVER, TFT_NAVY);
-    tft.drawString("Wind:", col1X, rowY, 2);
-    tft.setTextColor(TFT_WHITE, TFT_NAVY);
-    tft.drawString(String(windMph) + " mph", col1X + 46, rowY, 2);
+        rowY += rowStep;
+        int windMph = (int)roundf(weatherWindKmh * 0.621371f);
+        tft.setTextColor(TFT_SILVER, TFT_NAVY);
+        tft.drawString("Wind:", col1X, rowY, 2);
+        tft.setTextColor(TFT_WHITE, TFT_NAVY);
+        tft.drawString(String(windMph) + "mph " + degToCompass(weatherWindDirDeg), col1X + 42, rowY, 2);
 
-    uint16_t uvCol = TFT_GREEN;
-    if (weatherUvMax >= 8.0f)
-        uvCol = TFT_RED;
-    else if (weatherUvMax >= 6.0f)
-        uvCol = TFT_ORANGE;
-    else if (weatherUvMax >= 3.0f)
-        uvCol = TFT_YELLOW;
+        uint16_t uvCol = TFT_GREEN;
+        if (weatherUvMax >= 8.0f) uvCol = TFT_RED;
+        else if (weatherUvMax >= 6.0f) uvCol = TFT_ORANGE;
+        else if (weatherUvMax >= 3.0f) uvCol = TFT_YELLOW;
 
-    tft.setTextColor(TFT_SILVER, TFT_NAVY);
-    tft.drawString("Max UV:", col2X, rowY, 2);
-    tft.setTextColor(uvCol, TFT_NAVY);
-    tft.drawString(String(weatherUvMax, 1), col2X + 54, rowY, 2);
+        tft.setTextColor(TFT_SILVER, TFT_NAVY);
+        tft.drawString("Max UV:", col2X, rowY, 2);
+        tft.setTextColor(uvCol, TFT_NAVY);
+        tft.drawString(String(weatherUvMax, 1), col2X + 54, rowY, 2);
 
-    // Row 3: Sunrise & Sunset
-    rowY += rowStep;
-    tft.setTextColor(TFT_SILVER, TFT_NAVY);
-    tft.drawString("Rise:", col1X, rowY, 2);
-    tft.setTextColor(TFT_GOLD, TFT_NAVY);
-    tft.drawString(weatherSunriseStr, col1X + 46, rowY, 2);
+        rowY += rowStep;
+        tft.setTextColor(TFT_SILVER, TFT_NAVY);
+        tft.drawString("Rise:", col1X, rowY, 2);
+        tft.setTextColor(TFT_GOLD, TFT_NAVY);
+        tft.drawString(weatherSunriseStr, col1X + 46, rowY, 2);
 
-    tft.setTextColor(TFT_SILVER, TFT_NAVY);
-    tft.drawString("Set:", col2X, rowY, 2);
-    tft.setTextColor(TFT_ORANGE, TFT_NAVY);
-    tft.drawString(weatherSunsetStr, col2X + 48, rowY, 2);
+        tft.setTextColor(TFT_SILVER, TFT_NAVY);
+        tft.drawString("Set:", col2X, rowY, 2);
+        tft.setTextColor(TFT_ORANGE, TFT_NAVY);
+        tft.drawString(weatherSunsetStr, col2X + 48, rowY, 2);
 
-    // Footer hint
-    tft.setTextDatum(MC_DATUM);
-    tft.setTextColor(TFT_LIGHTGREY, TFT_NAVY);
-    tft.drawString("Tap anywhere to close", popX + (popW / 2), popY + popH - 13, 1);
+        tft.setTextDatum(MC_DATUM);
+        tft.setTextColor(TFT_LIGHTGREY, TFT_NAVY);
+        tft.drawString("Tap for Marine & Sky details", popX + (popW / 2), popY + popH - 13, 1);
+    }
+    else
+    {
+        // PAGE 2: Sea Temp, Wave Height, Gusts, Clouds, Pressure & Daylight Length
+        tft.setTextColor(TFT_SILVER, TFT_NAVY);
+        tft.drawString("Sea:", col1X, rowY, 2);
+        tft.setTextColor(TFT_CYAN, TFT_NAVY);
+        tft.drawString(hasMarineData ? (String(weatherSeaTempC, 1) + " C") : "N/A", col1X + 42, rowY, 2);
+
+        tft.setTextColor(TFT_SILVER, TFT_NAVY);
+        tft.drawString("Waves:", col2X, rowY, 2);
+        tft.setTextColor(TFT_SKYBLUE, TFT_NAVY);
+        tft.drawString(hasMarineData ? (String(weatherWaveHeightM, 1) + " m") : "N/A", col2X + 50, rowY, 2);
+
+        rowY += rowStep;
+        int gustMph = (int)roundf(weatherWindGustsKmh * 0.621371f);
+        tft.setTextColor(TFT_SILVER, TFT_NAVY);
+        tft.drawString("Gusts:", col1X, rowY, 2);
+        tft.setTextColor(TFT_WHITE, TFT_NAVY);
+        tft.drawString(String(gustMph) + " mph", col1X + 46, rowY, 2);
+
+        tft.setTextColor(TFT_SILVER, TFT_NAVY);
+        tft.drawString("Cloud:", col2X, rowY, 2);
+        tft.setTextColor(TFT_WHITE, TFT_NAVY);
+        tft.drawString(String(weatherCloudCoverPct) + "%", col2X + 50, rowY, 2);
+
+        rowY += rowStep;
+        tft.setTextColor(TFT_SILVER, TFT_NAVY);
+        tft.drawString("Press:", col1X, rowY, 2);
+        tft.setTextColor(TFT_GREEN, TFT_NAVY);
+        tft.drawString(String(weatherPressureHpa) + "hPa", col1X + 46, rowY, 2);
+
+        tft.setTextColor(TFT_SILVER, TFT_NAVY);
+        tft.drawString("Light:", col2X, rowY, 2);
+        tft.setTextColor(TFT_GOLD, TFT_NAVY);
+        tft.drawString(calcDaylightDuration(weatherSunriseStr, weatherSunsetStr), col2X + 46, rowY, 2);
+
+        tft.setTextDatum(MC_DATUM);
+        tft.setTextColor(TFT_LIGHTGREY, TFT_NAVY);
+        tft.drawString("Tap anywhere to close", popX + (popW / 2), popY + popH - 13, 1);
+    }
+
     tft.setTextDatum(TL_DATUM);
 }
 
@@ -524,6 +602,7 @@ void closeWeatherDetailPopup(bool isArrived)
         return;
 
     isWeatherPopupOpen = false;
+    weatherPopupPage = 0;
     tft.fillScreen(TFT_BLACK);
     displaySSIDAndWhen();
     drawStaticBackgroundImage();
@@ -537,17 +616,27 @@ bool handleWeatherForecastTouch(uint16_t tx, uint16_t ty)
     if (!gWeatherEnabled || (hourlyForecastCount == 0 && dailyForecastCount == 0))
         return false;
 
-    // 1. If popup is currently open, any tap closes it
+    // 1. If popup is open: advance from Page 1 -> Page 2, then close on next tap
     if (isWeatherPopupOpen)
     {
-        closeWeatherDetailPopup(false);
+        if (weatherPopupPage == 0)
+        {
+            weatherPopupPage = 1;
+            weatherPopupOpenedMs = millis(); // Reset auto-close timer
+            drawWeatherDetailPopup();
+        }
+        else
+        {
+            closeWeatherDetailPopup(false);
+        }
         return true;
     }
 
-    // 2. Tapping the bottom-left current weather summary (y >= 220, x = 20..185) opens the detail popup
+    // 2. Tapping the bottom-left current weather summary opens Page 1 of the detail popup
     if (weatherTempStr.length() > 0 && ty >= 220 && tx >= 20 && tx <= 185)
     {
         isWeatherPopupOpen = true;
+        weatherPopupPage = 0;
         weatherPopupOpenedMs = millis();
         drawWeatherDetailPopup();
         return true;
@@ -618,7 +707,6 @@ void fetchDestinationWeather()
 
         String geoUrl = String("http://") + "geocoding-api." + "open-meteo.com" +
                         "/v1/search?name=" + query + "&count=1&format=json";
-        Serial.printf("[WX] Geocoding URL: %s\n", geoUrl.c_str());
 
         if (http.begin(client, geoUrl))
         {
@@ -646,10 +734,9 @@ void fetchDestinationWeather()
     String wxUrl = String("http://") + "api." + "open-meteo.com" +
                    "/v1/forecast?latitude=" + String(cachedLat, 4) +
                    "&longitude=" + String(cachedLon, 4) +
-                   "&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code,is_day" +
-                   "&hourly=temperature_2m,weathercode,is_day&forecast_hours=25" +
-                   "&daily=weathercode,temperature_2m_max,precipitation_sum,uv_index_max,sunrise,sunset&forecast_days=16&timezone=auto";
-    Serial.printf("[WX] Forecast URL: %s\n", wxUrl.c_str());
+                   "&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m,cloud_cover,surface_pressure,weather_code,is_day" +
+                   "&hourly=temperature_2m,weathercode,is_day,precipitation_probability,precipitation&forecast_hours=25" +
+                   "&daily=weathercode,temperature_2m_max,precipitation_sum,precipitation_probability_max,uv_index_max,sunrise,sunset&forecast_days=16&timezone=auto";
 
     if (http.begin(client, wxUrl))
     {
@@ -663,10 +750,9 @@ void fetchDestinationWeather()
             {
                 destUtcOffsetSec = (long)roundf(utcOff);
                 hasDestUtcOffset = true;
-                Serial.printf("[WX] Destination UTC offset: %ld seconds\n", destUtcOffsetSec);
             }
 
-            // 1. Parse current weather + extra metrics (feels-like, humidity, wind)
+            // 1. Parse current weather + extra metrics
             String curKey = String(char(34)) + "current" + String(char(34)) + ":{";
             int curIdx = wxPayload.indexOf(curKey);
             bool hasCurrent = false;
@@ -676,7 +762,8 @@ void fetchDestinationWeather()
             {
                 String curSection = wxPayload.substring(curIdx);
                 float tempC = 0.0f, wCode = 0.0f, isDayVal = 1.0f;
-                float appTemp = 0.0f, hum = 0.0f, wind = 0.0f;
+                float appTemp = 0.0f, hum = 0.0f, wind = 0.0f, wDir = 0.0f;
+                float gusts = 0.0f, clouds = 0.0f, press = 0.0f;
 
                 if (extractJsonNumber(curSection, "temperature_2m", tempC) &&
                     extractJsonNumber(curSection, "weather_code", wCode))
@@ -695,9 +782,17 @@ void fetchDestinationWeather()
                     weatherHumidityPct = (int)roundf(hum);
                 if (extractJsonNumber(curSection, "wind_speed_10m", wind))
                     weatherWindKmh = (int)roundf(wind);
+                if (extractJsonNumber(curSection, "wind_direction_10m", wDir))
+                    weatherWindDirDeg = (int)roundf(wDir);
+                if (extractJsonNumber(curSection, "wind_gusts_10m", gusts))
+                    weatherWindGustsKmh = (int)roundf(gusts);
+                if (extractJsonNumber(curSection, "cloud_cover", clouds))
+                    weatherCloudCoverPct = (int)roundf(clouds);
+                if (extractJsonNumber(curSection, "surface_pressure", press))
+                    weatherPressureHpa = (int)roundf(press);
             }
 
-            // 2. Parse next 24 hours (3 pages of 8 hours, shifted +1h when Island +1h is enabled)
+            // 2. Parse next 24 hours (including precipitation probability & mm)
             String hrKey = String(char(34)) + "hourly" + String(char(34)) + ":{";
             int hrIdx = wxPayload.indexOf(hrKey);
             if (hrIdx >= 0)
@@ -707,11 +802,15 @@ void fetchDestinationWeather()
                 std::array<float, 25> temps = {};
                 std::array<float, 25> codes = {};
                 std::array<float, 25> days = {};
+                std::array<float, 25> probs = {};
+                std::array<float, 25> precips = {};
 
                 int nH = extractJsonHourArray(hrSection, "time", hours.data(), 25);
                 int nT = extractJsonNumberArray(hrSection, "temperature_2m", temps.data(), 25);
                 int nC = extractJsonNumberArray(hrSection, "weathercode", codes.data(), 25);
                 int nD = extractJsonNumberArray(hrSection, "is_day", days.data(), 25);
+                int nP = extractJsonNumberArray(hrSection, "precipitation_probability", probs.data(), 25);
+                int nM = extractJsonNumberArray(hrSection, "precipitation", precips.data(), 25);
 
                 int available = min(min(nH, nT), min(nC, nD));
                 int startOffset = (available >= 25) ? 1 : 0;
@@ -727,7 +826,8 @@ void fetchDestinationWeather()
                         hourlyForecast.at(i).tempC = (int)roundf(temps.at(src));
                         hourlyForecast.at(i).wmoCode = (int)roundf(codes.at(src));
                         hourlyForecast.at(i).isDay = ((int)roundf(days.at(src)) == 1);
-                        hourlyForecast.at(i).precipMm = 0.0f;
+                        hourlyForecast.at(i).precipProb = (src < nP) ? (int)roundf(probs.at(src)) : 0;
+                        hourlyForecast.at(i).precipMm = (src < nM) ? precips.at(src) : 0.0f;
                         hourlyForecast.at(i).valid = true;
                         hourlyForecastCount++;
                     }
@@ -738,7 +838,7 @@ void fetchDestinationWeather()
                 }
             }
 
-            // 3. Parse up to 16 days + daily precipitation, UV max, sunrise & sunset
+            // 3. Parse up to 16 days
             String dyKey = String(char(34)) + "daily" + String(char(34)) + ":{";
             int dyIdx = wxPayload.indexOf(dyKey);
             if (dyIdx >= 0)
@@ -748,18 +848,18 @@ void fetchDestinationWeather()
                 std::array<float, 16> dCodes = {};
                 std::array<float, 16> dTemps = {};
                 std::array<float, 16> dPrecip = {};
+                std::array<float, 16> dProb = {};
                 std::array<float, 16> dUv = {};
 
                 int nN = extractJsonDayNameArray(dySection, "time", dayNames.data(), 16);
                 int nC = extractJsonNumberArray(dySection, "weathercode", dCodes.data(), 16);
                 int nT = extractJsonNumberArray(dySection, "temperature_2m_max", dTemps.data(), 16);
                 int nP = extractJsonNumberArray(dySection, "precipitation_sum", dPrecip.data(), 16);
+                int nPr = extractJsonNumberArray(dySection, "precipitation_probability_max", dProb.data(), 16);
                 int nU = extractJsonNumberArray(dySection, "uv_index_max", dUv.data(), 16);
 
                 if (nU > 0)
-                {
                     weatherUvMax = dUv.at(0);
-                }
 
                 weatherSunriseStr = extractJsonFirstTimeHHMM(dySection, "sunrise", gIslandPlusOne);
                 weatherSunsetStr = extractJsonFirstTimeHHMM(dySection, "sunset", gIslandPlusOne);
@@ -776,6 +876,7 @@ void fetchDestinationWeather()
                         dailyForecast.at(i).wmoCode = (int)roundf(dCodes.at(i));
                         dailyForecast.at(i).isDay = true;
                         dailyForecast.at(i).precipMm = (i < nP) ? dPrecip.at(i) : 0.0f;
+                        dailyForecast.at(i).precipProb = (i < nPr) ? (int)roundf(dProb.at(i)) : 0;
                         dailyForecast.at(i).valid = true;
                         dailyForecastCount++;
                     }
@@ -792,10 +893,37 @@ void fetchDestinationWeather()
                 Serial.println("[WX] Updated destination weather: " + weatherTempStr + " deg " + weatherCondStr);
             }
         }
-        else
-        {
-            Serial.printf("[WX] Weather HTTP error: %d (%s)\n", code, http.errorToString(code).c_str());
-        }
         http.end();
     }
+
+    // 4. Fetch Marine Data (Sea Surface Temp & Wave Height)
+    String marineUrl = String("http://") + "marine-api." + "open-meteo.com" +
+                       "/v1/marine?latitude=" + String(cachedLat, 4) +
+                       "&longitude=" + String(cachedLon, 4) +
+                       "&current=sea_surface_temperature,wave_height";
+
+    hasMarineData = false;
+    if (http.begin(client, marineUrl))
+    {
+        if (http.GET() == HTTP_CODE_OK)
+        {
+String mPayload = http.getString();
+String curKey = String(char(34)) + "current" + String(char(34)) + ":{";
+int curIdx = mPayload.indexOf(curKey);
+if (curIdx >= 0)
+{
+String curSec = mPayload.substring(curIdx);
+float seaT = 0.0f, waveH = 0.0f;
+if (extractJsonNumber(curSec, "sea_surface_temperature", seaT) &&
+extractJsonNumber(curSec, "wave_height", waveH))
+{
+weatherSeaTempC = seaT;
+weatherWaveHeightM = waveH;
+hasMarineData = true;
+Serial.printf("[WX] Marine: Sea %.1f C, Waves %.1f m\n", weatherSeaTempC, weatherWaveHeightM);
+}
+}
+}
+http.end();
+}
 }
