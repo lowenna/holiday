@@ -1671,6 +1671,11 @@ void drawBootWelcomeScreen(const String &savedSsid)
     tft.setCursor(16, 192);
     tft.printf("Starting hotspot %s...", otaHostname);
   }
+
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_DARKCYAN, TFT_BLACK);
+  tft.drawString("Hold screen to open Settings on boot", SCREEN_W / 2, 222, 1);
+  tft.setTextDatum(TL_DATUM);
 }
 
 void drawSetupPortalScreen(const String &apName, bool showTimeoutHint)
@@ -2223,9 +2228,26 @@ void setup()
   bool wifiConnected = wifiManager.autoConnect(otaHostname);
   if (!wifiConnected)
   {
-    // Drive the non-blocking AP portal with the live MM:SS countdown
-    runNonBlockingPortal(wifiManager, 600000UL);
+    // Give a rebooting router 15 extra seconds before restarting the ESP32
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextColor(TFT_YELLOW, TFT_BLACK);
+    tft.drawString("Wi-Fi connection lost - retrying...", SCREEN_W / 2, 100, 2);
+    tft.setTextDatum(TL_DATUM);
+
+    WiFi.reconnect();
+    unsigned long retryStart = millis();
+    while (WiFi.status() != WL_CONNECTED && (millis() - retryStart < 15000UL))
+    {
+      delay(500);
+    }
     wifiConnected = (WiFi.status() == WL_CONNECTED);
+  }
+
+  if (!wifiConnected)
+  {
+    showScreenError("WI-FI ERROR", "Failed to connect to Wi-Fi.\nRestarting in 5 seconds...", true, 5000);
+    ESP.restart();
   }
 
   wifiManager.setConfigPortalBlocking(true);
@@ -2248,38 +2270,53 @@ void setup()
         custom_hol_where.getValue());
   }
 
-  // 6. Start OTA, then show combined OTA + "Tap to configure" screen for 10s
+  // 6. Start OTA; only show the 10s Settings screen if unconfigured or user holds the screen
   bool mdnsOk = setupOTA();
   bool portalRan = false;
   bool portalTimedOut = false;
 
-  while (areWeConfiguring(mdnsOk))
+  uint16_t bootTx, bootTy;
+  bool userHeldScreen = getTouchPixel(bootTx, bootTy);
+
+  if (userHeldScreen || gPrefStatus != PREF_VALID)
   {
-    portalRan = true;
-    otaServer.stop();
-
-    String apName = String(otaHostname);
-    drawSetupPortalScreen(apName, false);
-
-    // Run config portal non-blocking with live MM:SS countdown
-    wifiManager.setConfigPortalBlocking(false);
-    wifiManager.startConfigPortal(apName.c_str());
-
-    bool portalCancelled = false;
-    portalTimedOut = runNonBlockingPortal(wifiManager, 600000UL, &portalCancelled);
-
-    wifiManager.setConfigPortalBlocking(true);
-    otaServer.begin();
-
-    if (portalCancelled)
+    if (userHeldScreen)
     {
-      portalRan = false;
-      continue; // Return to the toggle buttons screen
+      tone(AZTOUCH_BEEPER, 880, 60);
     }
-    break;
-  }
 
-  tft.fillScreen(TFT_BLACK);
+    while (areWeConfiguring(mdnsOk))
+    {
+      portalRan = true;
+      otaServer.stop();
+
+      String apName = String(otaHostname);
+      drawSetupPortalScreen(apName, false);
+
+      // Run config portal non-blocking with live MM:SS countdown
+      wifiManager.setConfigPortalBlocking(false);
+      wifiManager.startConfigPortal(apName.c_str());
+
+      bool portalCancelled = false;
+      portalTimedOut = runNonBlockingPortal(wifiManager, 600000UL, &portalCancelled);
+
+      wifiManager.setConfigPortalBlocking(true);
+      otaServer.begin();
+
+      if (portalCancelled)
+      {
+        portalRan = false;
+        continue; // Return to the toggle buttons screen
+      }
+      break;
+    }
+
+    tft.fillScreen(TFT_BLACK); // Only clear if the Settings UI was shown
+  }
+  else
+  {
+    Serial.println("Preferences valid & no touch held; skipping 10s boot config screen.");
+  }
 
   // 7. Save updated holiday details if changed OR if portal was submitted before timing out
   if (shouldSaveConfig || (portalRan && !portalTimedOut))
@@ -2293,14 +2330,33 @@ void setup()
         custom_hol_where.getValue());
   }
 
-  // 8. Sync NTP time
+  // 8. Sync NTP time (updating the Welcome screen status card in-place)
   configTzTime(MY_TZ, "pool.ntp.org", "time.nist.gov");
 
-  tft.setTextFont(2);
-  tft.setTextSize(1);
-  tft.setTextColor(TFT_CYAN, TFT_BLACK);
-  tft.setCursor(0, 0);
-  tft.println("Getting current time from the Internet...");
+  if (!userHeldScreen && gPrefStatus == PREF_VALID)
+  {
+    // Welcome screen is still visible — update its bottom Wi-Fi card cleanly in-place
+    tft.fillRect(14, 166, SCREEN_W - 28, 44, TFT_BLACK);
+    tft.setTextFont(2);
+    tft.setTextSize(1);
+    tft.setTextDatum(TL_DATUM);
+    tft.setTextColor(TFT_GREEN, TFT_BLACK);
+    tft.setCursor(16, 169);
+    tft.printf("Connected to %s", WiFi.SSID().c_str());
+
+    tft.setTextColor(TFT_CYAN, TFT_BLACK);
+    tft.setCursor(16, 190);
+    tft.print("Syncing NTP time");
+  }
+  else
+  {
+    // Screen was cleared after Settings UI — show a clean centred status message
+    tft.setTextFont(2);
+    tft.setTextSize(1);
+    tft.setTextColor(TFT_CYAN, TFT_BLACK);
+    tft.setCursor(16, 100);
+    tft.print("Getting current time from the Internet");
+  }
 
   struct tm timeinfo;
   int retry = 0;
@@ -2333,16 +2389,15 @@ void setup()
     showScreenError("DATE ERROR", "Could not parse holiday target date.\nPlease re-run setup.", true, 4000);
   }
 
-  // 10. Render static UI elements, persistent sprites & live weather
+  // 10. Render static UI elements & persistent sprites immediately (weather loads right after on first loop tick)
   initSprites();
   displaySSIDAndWhen();
   drawStaticBackgroundImage();
   displayLines();
   drawWhere(false);
 
-  fetchDestinationWeather();
-  drawWeatherBadge();
-  lastWeatherFetchMs = millis();
+  // Force loop() to fetch initial weather immediately after rendering the countdown
+  lastWeatherFetchMs = millis() - WEATHER_INTERVAL_MS;
 
   lastInteractionMillis = millis();
   lastBacklightBoostMs = millis();
