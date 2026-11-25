@@ -31,7 +31,7 @@ static bool ensureCrabSprite()
 {
     if (!crabSprReady)
     {
-        crabSpr.setColorDepth(8); // 320x144x8-bit = ~46 KB (half the RAM of 16-bit)
+        crabSpr.setColorDepth(8); // 320x144x8-bit = ~46 KB (fixes sprite allocation failure)
         if (crabSpr.createSprite(CRAB_SCR_W, BAND_H) == nullptr)
         {
             Serial.println("[CRAB] Failed to allocate 320x144 sprite!");
