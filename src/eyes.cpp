@@ -246,7 +246,6 @@ static void drawGorgeousShell(TFT_eSprite &spr, int cx, int cy, int dir, float t
     spr.drawCircle(w3x, w3y, 12, colRim);
     spr.fillCircle(w3x - backDir * 2, w3y - 4, 4, TFT_WHITE);
 
-    
     // 3. Whorl 2
     int w2x = cx + backDir * 11;
     int w2y = cy - 8 + bobY;
