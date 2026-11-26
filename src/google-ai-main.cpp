@@ -1268,7 +1268,16 @@ void drawConfigScreenBase(int16_t col1X, int16_t col2X, int16_t tileW,
                           int16_t setupX, int16_t updateX, int16_t startX,
                           int16_t btnY, int16_t btnW, int16_t btnH)
 {
-  drawModernHeader("Settings & Options", "v2026");
+  drawModernHeader("Settings & Options");
+
+  // Show current firmware version right-aligned in Font 2 (matching "Starting Up")
+  tft.setFreeFont(nullptr);
+  tft.setTextFont(2);
+  tft.setTextSize(1);
+  tft.setTextDatum(MR_DATUM);
+  tft.setTextColor(UI_TEXT_MUTED, UI_CARD);
+  tft.drawString("v" + String(FW_VERSION), SCREEN_W - 10, 14, 2);
+  tft.setTextDatum(TL_DATUM);
 
   // 2x3 Elevated Toggle Cards (y = 36..180)
   drawToggleTile(col1X, row1Y, tileW, "Screensaver", gScreensaverEnabled);
