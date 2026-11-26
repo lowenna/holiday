@@ -1877,6 +1877,13 @@ void drawBootWelcomeScreen(const String &savedSsid)
 {
   drawModernHeader("Starting Up");
 
+  // Show current firmware version right-aligned in the top header bar
+  tft.setFreeFont(nullptr);
+  tft.setTextDatum(MR_DATUM);
+  tft.setTextColor(UI_TEXT_MUTED, UI_CARD);
+  tft.drawString("v" + String(FW_VERSION), SCREEN_W - 10, 14, 1);
+  tft.setTextDatum(TL_DATUM);
+
   if (savedSsid.length() > 0)
   {
     updateBootStepRow(0, BOOT_STEP_ACTIVE, "Connecting to Wi-Fi", savedSsid + ".");
@@ -1889,9 +1896,9 @@ void drawBootWelcomeScreen(const String &savedSsid)
   updateBootStepRow(1, BOOT_STEP_PENDING, "Waiting for network...", "Time sync pending");
 
   // Bottom divider & subtle touch hint matching the configuration screens
-  tft.drawFastHLine(10, 192, SCREEN_W - 20, 0x39E7);
+  tft.drawFastHLine(10, 192, SCREEN_W - 20, UI_BORDER);
   tft.setTextDatum(MC_DATUM);
-  tft.setTextColor(0x9CD3, 0x0000);
+  tft.setTextColor(UI_TEXT_MUTED, UI_BG);
   tft.drawString("Touch & hold screen for Settings", SCREEN_W / 2, 214, 2);
   tft.setTextDatum(TL_DATUM);
 }
