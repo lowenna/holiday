@@ -1877,11 +1877,13 @@ void drawBootWelcomeScreen(const String &savedSsid)
 {
   drawModernHeader("Starting Up");
 
-  // Show current firmware version right-aligned in the top header bar
+  // Show current firmware version right-aligned in Font 2 (matching "Starting Up")
   tft.setFreeFont(nullptr);
+  tft.setTextFont(2);
+  tft.setTextSize(1);
   tft.setTextDatum(MR_DATUM);
   tft.setTextColor(UI_TEXT_MUTED, UI_CARD);
-  tft.drawString("v" + String(FW_VERSION), SCREEN_W - 10, 14, 1);
+  tft.drawString("v" + String(FW_VERSION), SCREEN_W - 10, 14, 2);
   tft.setTextDatum(TL_DATUM);
 
   if (savedSsid.length() > 0)
