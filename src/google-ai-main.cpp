@@ -167,6 +167,9 @@ unsigned long birthdayPopupOpenedMs = 0;
 bool triggerTestBirthday = false;
 bool triggerTestScreensaver = false;
 String pendingCloudOtaUrl = "";
+String incomingScreenNote = "";
+String activeScreenNote = "";
+bool isNotePopupOpen = false;
 
 time_t rawhol = 0;
 
@@ -282,17 +285,17 @@ bool setupOTA()
     MDNS.addService("http", "tcp", 80);
   }
 
-  // Main Web Dashboard: Holiday Settings + Firmware OTA
+  // Main Web Dashboard: Holiday Settings + Message Board + Firmware OTA
   otaServer.on("/", HTTP_GET, []()
                {
-    char dateBuf[16];
-    snprintf(dateBuf, sizeof(dateBuf), "%04d-%02d-%02d", atoi(gYear), atoi(gMonth), atoi(gDay));
+    std::array<char, 16> dateBuf{};
+    snprintf(dateBuf.data(), dateBuf.size(), "%04d-%02d-%02d", atoi(gYear), atoi(gMonth), atoi(gDay));
 
-    char timeBuf[8];
-    snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", atoi(gHour), atoi(gMins));
+    std::array<char, 16> timeBuf{};
+    snprintf(timeBuf.data(), timeBuf.size(), "%02d:%02d", atoi(gHour), atoi(gMins));
 
-    char bdayBuf[16];
-    snprintf(bdayBuf, sizeof(bdayBuf), "%04d-%02d-%02d", atoi(gYear), gBdayMonth, gBdayDay);
+    std::array<char, 16> bdayBuf{};
+    snprintf(bdayBuf.data(), bdayBuf.size(), "%04d-%02d-%02d", atoi(gYear), gBdayMonth, gBdayDay);
 
     String html = R"rawliteral(
 <!DOCTYPE html>
@@ -331,7 +334,7 @@ bool setupOTA()
     }
     #progWrap { display: none; margin-top: 14px; background: #2c2c2e; border-radius: 8px; overflow: hidden; height: 22px; }
     #progBar { width: 0%; height: 100%; background: #00acc1; transition: width 0.2s; }
-    #otaStatus, #bdayStatus, #ssaverStatus { font-size: 13px; color: #aaa; margin-top: 8px; text-align: center; }
+    #otaStatus, #bdayStatus, #ssaverStatus, #noteStatus { font-size: 13px; color: #aaa; margin-top: 8px; text-align: center; }
   </style>
 </head>
 <body>
@@ -342,13 +345,13 @@ bool setupOTA()
       <input type="text" name="where" maxlength="20" value=")rawliteral" + String(gWhere) + R"rawliteral(" required>
 
       <label class="field">Departure Date</label>
-      <input type="date" name="date" value=")rawliteral" + String(dateBuf) + R"rawliteral(" required>
+      <input type="date" name="date" value=")rawliteral" + String(dateBuf.data()) + R"rawliteral(" required>
 
       <label class="field">Departure Time (UK)</label>
-      <input type="time" name="time" value=")rawliteral" + String(timeBuf) + R"rawliteral(" required>
+      <input type="time" name="time" value=")rawliteral" + String(timeBuf.data()) + R"rawliteral(" required>
 
       <label class="field">Birthday (Day &amp; Month)</label>
-      <input type="date" name="bday" value=")rawliteral" + String(bdayBuf) + R"rawliteral(">
+      <input type="date" name="bday" value=")rawliteral" + String(bdayBuf.data()) + R"rawliteral(">
 
       <div class="grid">
         <label class="chk"><input type="checkbox" name="ssaver" value="1" )rawliteral" + String(gScreensaverEnabled ? "checked" : "") + R"rawliteral(>Screensaver</label>
@@ -366,6 +369,15 @@ bool setupOTA()
     <button type="button" class="test-btn" id="testSsaverBtn" style="background:#00695c;">Preview Screensaver</button>
     <div id="ssaverStatus"></div>
   </div>
+
+  <div class="card">
+    <h2>Send Note to Display</h2>
+    <p style="font-size:13px;color:#aaa;margin:0 0 10px 0">Pop up a message on the screen right now:</p>
+    <input type="text" id="noteText" maxlength="90" placeholder="e.g. Don't forget passports!">
+    <button type="button" id="sendNoteBtn" style="margin-top:12px;">Send to Screen</button>
+    <div id="noteStatus"></div>
+  </div>
+
   <div class="card">
     <h2>Software Update</h2>
     <p style="font-size:13px;color:#aaa;margin:0 0 6px 0">Device: <b>)rawliteral" + String(otaHostname) + R"rawliteral(.local</b></p>
@@ -385,9 +397,34 @@ bool setupOTA()
     <div id="progWrap"><div id="progBar"></div></div>
     <div id="otaStatus"></div>
   </div>
+
   <script>
     const CURRENT_VER = ")rawliteral" + String(FW_VERSION) + R"rawliteral(";
     let cloudBinUrl = "";
+
+    document.getElementById('sendNoteBtn').addEventListener('click', function() {
+      const inp = document.getElementById('noteText');
+      const nStatus = document.getElementById('noteStatus');
+      const msg = inp.value.trim();
+      if (!msg) {
+        nStatus.style.color = '#ff8a80';
+        nStatus.textContent = 'Type a short message first.';
+        return;
+      }
+      nStatus.style.color = '#aaa';
+      nStatus.textContent = 'Sending to display...';
+      fetch('/sendnote?msg=' + encodeURIComponent(msg), { method: 'POST' })
+        .then(function(r) { return r.text(); })
+        .then(function(txt) {
+          nStatus.style.color = '#69f0ae';
+          nStatus.textContent = txt;
+          inp.value = '';
+        })
+        .catch(function() {
+          nStatus.style.color = '#ff8a80';
+          nStatus.textContent = 'Could not send note.';
+        });
+    });
 
     document.getElementById('checkGhBtn').addEventListener('click', function() {
       const ghStatus = document.getElementById('ghStatus');
@@ -517,6 +554,24 @@ bool setupOTA()
     triggerTestScreensaver = true;
     otaServer.send(200, "text/plain", "Screensaver triggered!"); });
 
+  // Push a pop-up message from phone/PC onto the display
+  otaServer.on("/sendnote", HTTP_POST, []()
+               {
+    if (otaServer.hasArg("msg"))
+    {
+      String msg = otaServer.arg("msg");
+      msg.trim();
+      if (msg.length() > 0)
+      {
+        if (msg.length() > 90)
+          msg = msg.substring(0, 90);
+        incomingScreenNote = msg;
+        otaServer.send(200, "text/plain", "Message sent to screen!");
+        return;
+      }
+    }
+    otaServer.send(400, "text/plain", "Empty message"); });
+
   // Proxy GitHub version.json check through the ESP32 to avoid browser CORS errors
   otaServer.on("/checkota", HTTP_GET, []()
                {
@@ -624,6 +679,7 @@ bool setupOTA()
   Serial.printf("Setup at: http://%s.local (IP: %s)\n", otaHostname, WiFi.localIP().toString().c_str());
   return mdnsOk;
 }
+
 
 
 void drawOtaProgressScreen(const char *statusText, int percent)
@@ -2458,6 +2514,82 @@ void updateAutoBacklight(bool isArrived)
     ledcWrite(BL_PWM_CHANNEL, currentBacklightLevel);
   }
 }
+void drawScreenNotePopup(const String &noteText)
+{
+  const int16_t popW = 292;
+  const int16_t popH = 152;
+  const int16_t popX = (SCREEN_W - popW) / 2;
+  const int16_t popY = 42;
+
+  // Elevated dark-slate card with sky-cyan border
+  tft.fillRoundRect(popX, popY, popW, popH, 8, UI_CARD);
+  tft.drawRoundRect(popX, popY, popW, popH, 8, UI_ACCENT);
+
+  // Header strip
+  tft.fillRoundRect(popX + 1, popY + 1, popW - 2, 26, 7, UI_CARD_ALT);
+  tft.fillRect(popX + 1, popY + 18, popW - 2, 9, UI_CARD_ALT);
+  tft.drawFastHLine(popX + 1, popY + 27, popW - 2, UI_BORDER);
+  tft.fillRoundRect(popX + 8, popY + 6, 4, 15, 2, UI_ACCENT);
+
+  tft.setFreeFont(nullptr);
+  tft.setTextFont(2);
+  tft.setTextSize(1);
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextColor(TFT_WHITE, UI_CARD_ALT);
+  tft.drawString("Message for You", popX + 18, popY + 14, 2);
+
+  // Word-wrap note across up to 3 centered lines
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_WHITE, UI_CARD);
+
+  String remaining = noteText;
+  remaining.trim();
+  const int maxChars = 32;
+  int16_t lineY = popY + 52;
+
+  for (int lineIdx = 0; lineIdx < 3 && remaining.length() > 0; lineIdx++)
+  {
+    String line;
+    if ((int)remaining.length() <= maxChars || lineIdx == 2)
+    {
+      line = remaining;
+      if ((int)line.length() > maxChars)
+      {
+        line = line.substring(0, maxChars - 3) + "...";
+      }
+      remaining = "";
+    }
+    else
+    {
+      int splitAt = remaining.lastIndexOf(' ', maxChars);
+      if (splitAt <= 0)
+        splitAt = maxChars;
+      line = remaining.substring(0, splitAt);
+      remaining = remaining.substring(splitAt);
+      remaining.trim();
+    }
+    tft.drawString(line, popX + (popW / 2), lineY, 2);
+    lineY += 22;
+  }
+
+  // Footer dismiss hint
+  tft.drawFastHLine(popX + 12, popY + popH - 22, popW - 24, UI_BORDER);
+  tft.setTextColor(UI_TEXT_MUTED, UI_CARD);
+  tft.drawString("Tap anywhere to dismiss", popX + (popW / 2), popY + popH - 11, 1);
+  tft.setTextDatum(TL_DATUM);
+}
+
+void closeScreenNotePopup(bool isArrived)
+{
+  isNotePopupOpen = false;
+  activeScreenNote = "";
+  tft.fillScreen(TFT_BLACK);
+  displaySSIDAndWhen();
+  drawStaticBackgroundImage();
+  displayLines();
+  drawWhere(isArrived);
+  drawWeatherBadge();
+}
 
 void openInAppSetup()
 {
@@ -2845,6 +2977,7 @@ void loop()
     triggerTestScreensaver = false;
     isWeatherPopupOpen = false;
     isBirthdayPopupOpen = false;
+    isNotePopupOpen = false;
     inDimClockMode = false;
     inScreenSaver = true;
     updateScreenSaverEyes(true);
@@ -2859,6 +2992,41 @@ void loop()
     String url = pendingCloudOtaUrl;
     pendingCloudOtaUrl = "";
     triggerCloudOTAFromWeb(url);
+  }
+
+  // Handle incoming pop-up note sent from phone/PC
+  if (incomingScreenNote.length() > 0)
+  {
+    activeScreenNote = incomingScreenNote;
+    incomingScreenNote = "";
+    lastInteractionMillis = millis();
+    lastBacklightBoostMs = millis();
+
+    if (inScreenSaver)
+    {
+      wakeFromScreenSaver(isArrived);
+    }
+    if (inDimClockMode)
+    {
+      wakeFromDimClockMode(isArrived);
+    }
+    if (isWeatherPopupOpen)
+    {
+      closeWeatherDetailPopup(isArrived);
+    }
+    if (isBirthdayPopupOpen)
+    {
+      closeBirthdayCelebration(isArrived);
+    }
+
+    updateAutoBacklight(isArrived);
+    tone(AZTOUCH_BEEPER, 880, 60);
+    delay(65);
+    tone(AZTOUCH_BEEPER, 1175, 90);
+
+    isNotePopupOpen = true;
+    drawScreenNotePopup(activeScreenNote);
+    lastRenderedSec = 0;
   }
 
   // Automatic 08:30 destination local time birthday celebration (once per year)
@@ -2898,7 +3066,7 @@ void loop()
   {
     lastWeatherFetchMs = millis();
     fetchDestinationWeather();
-    if (!inScreenSaver && !inDimClockMode && !isWeatherPopupOpen && !isBirthdayPopupOpen)
+    if (!inScreenSaver && !inDimClockMode && !isWeatherPopupOpen && !isBirthdayPopupOpen && !isNotePopupOpen)
     {
       drawWeatherBadge();
     }
@@ -2957,6 +3125,15 @@ void loop()
     }
   }
 
+  // Dismiss active screen note on any tap
+  if (isNotePopupOpen && freshTap)
+  {
+    tone(AZTOUCH_BEEPER, 880, 50);
+    closeScreenNotePopup(isArrived);
+    lastRenderedSec = 0;
+    freshTap = false;
+  }
+
   // Auto-close weather detail popup after 15 seconds
   if (isWeatherPopupOpen && (millis() - weatherPopupOpenedMs >= 15000UL))
   {
@@ -2968,7 +3145,7 @@ void loop()
   // 1. Larger top-right gear icon zone (x >= 255, y <= 40) opens setup
   // 2. On your birthday, tapping the top bar replays the celebration
   // 3. Otherwise, rest of top bar (x < 255, y <= 40) toggles UK / Destination time
-  if (freshTap && !inScreenSaver && !inDimClockMode && !isWeatherPopupOpen && !isBirthdayPopupOpen && ty <= 40)
+  if (freshTap && !inScreenSaver && !inDimClockMode && !isWeatherPopupOpen && !isBirthdayPopupOpen && !isNotePopupOpen && ty <= 40)
   {
     if (tx >= 255)
     {
@@ -2991,7 +3168,7 @@ void loop()
     }
   }
 
-  if (gScreensaverEnabled && !inScreenSaver && (millis() - lastInteractionMillis >= SCREENSAVER_TIMEOUT_MS))
+  if (gScreensaverEnabled && !inScreenSaver && !isNotePopupOpen && (millis() - lastInteractionMillis >= SCREENSAVER_TIMEOUT_MS))
   {
     isWeatherPopupOpen = false;
     isBirthdayPopupOpen = false;
@@ -3003,7 +3180,7 @@ void loop()
     return;
   }
 
-  if (freshTap && !inScreenSaver && !inDimClockMode && !isBirthdayPopupOpen && handleWeatherForecastTouch(tx, ty))
+  if (freshTap && !inScreenSaver && !inDimClockMode && !isBirthdayPopupOpen && !isNotePopupOpen && handleWeatherForecastTouch(tx, ty))
   {
     tone(AZTOUCH_BEEPER, 880, 45);
     lastRenderedSec = 0;
@@ -3012,7 +3189,7 @@ void loop()
 
   // Main countdown area touch handling (before arrival):
   // Toggle between countdown (DD.HH:MM:SS) and destination local time (HH:MM:SS in cyan)
-  if (freshTap && !inScreenSaver && !inDimClockMode && !isWeatherPopupOpen && !isBirthdayPopupOpen && !isArrived && hasDestUtcOffset &&
+  if (freshTap && !inScreenSaver && !inDimClockMode && !isWeatherPopupOpen && !isBirthdayPopupOpen && !isNotePopupOpen && !isArrived && hasDestUtcOffset &&
       ty >= COUNTDOWN_Y && ty <= (COUNTDOWN_Y + COUNTDOWN_H))
   {
     showCountdownAsLocalTime = !showCountdownAsLocalTime;
@@ -3034,7 +3211,7 @@ void loop()
       if (currentHolidayDay != lastHolidayDayShown)
       {
         lastHolidayDayShown = currentHolidayDay;
-        if (!inDimClockMode && !inScreenSaver && !isWeatherPopupOpen && !isBirthdayPopupOpen)
+        if (!inDimClockMode && !inScreenSaver && !isWeatherPopupOpen && !isBirthdayPopupOpen && !isNotePopupOpen)
         {
           displaySSIDAndWhen();
         }
@@ -3045,6 +3222,7 @@ void loop()
         holidayCelebrated = true;
         isWeatherPopupOpen = false;
         isBirthdayPopupOpen = false;
+        isNotePopupOpen = false;
         if (inDimClockMode)
         {
           wakeFromDimClockMode(true);
@@ -3068,7 +3246,7 @@ void loop()
     int diffMins = (totalSecs % 3600) / 60;
     int remSecs = totalSecs % 60;
 
-    if (!isWeatherPopupOpen && !isBirthdayPopupOpen)
+    if (!isWeatherPopupOpen && !isBirthdayPopupOpen && !isNotePopupOpen)
     {
       if (inScreenSaver)
       {
