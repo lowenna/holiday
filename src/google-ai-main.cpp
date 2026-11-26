@@ -396,7 +396,7 @@ bool setupOTA()
       ghStatus.textContent = 'Checking GitHub...';
       installBtn.style.display = 'none';
 
-      fetch('https://githubusercontent.com' + Date.now())
+      fetch('https://' + 'raw.' + '://githubusercontent.com' + Date.now())
         .then(function(r) {
           if (!r.ok) throw new Error('HTTP ' + r.status);
           return r.json();
@@ -505,7 +505,7 @@ bool setupOTA()
 )rawliteral";
 
     otaServer.send(200, "text/html", html); });
-  // Trigger an immediate Birthday Celebration test on the display
+      // Trigger an immediate Birthday Celebration test on the display
   otaServer.on("/testbday", HTTP_POST, []()
                {
     triggerTestBirthday = true;
@@ -1198,6 +1198,84 @@ void drawQrCodeCard(int16_t cardX, int16_t cardY, int16_t cardSize, const String
     }
   }
 }
+
+void showTouchHelpScreen()
+{
+  drawModernHeader("Touch Guide");
+
+  // Elevated dark-slate card containing the 5 interactive touch zones (y = 35..183)
+  tft.fillRoundRect(10, 35, SCREEN_W - 20, 148, 8, UI_CARD);
+  tft.drawRoundRect(10, 35, SCREEN_W - 20, 148, 8, UI_BORDER);
+
+  struct HelpRow
+  {
+    const char *zone;
+    const char *action;
+    uint16_t badgeCol;
+  };
+
+  const HelpRow rows[] = {
+      {"Top Clock", "Switch UK / Resort time", UI_SUCCESS},
+      {"Forecast Bar", "Cycle 24h & 16-day views", UI_ACCENT},
+      {"Countdown", "Toggle Resort local clock", TFT_CYAN},
+      {"Weather Bar", "Open Marine & Sky details", TFT_GOLD},
+      {"Crab Screen", "Tap crab to hide, sky to wake", UI_DANGER}};
+
+  tft.setFreeFont(nullptr);
+  tft.setTextFont(2);
+  tft.setTextSize(1);
+
+  int16_t rowY = 42;
+  const int16_t rowStep = 28;
+
+  for (int i = 0; i < 5; i++)
+  {
+    // Colored indicator dot on left
+    tft.fillCircle(22, rowY + 8, 4, rows[i].badgeCol);
+
+    // Zone name (bold-ish white) + right-aligned or offset action description
+    tft.setTextDatum(TL_DATUM);
+    tft.setTextColor(TFT_WHITE, UI_CARD);
+    tft.drawString(rows[i].zone, 33, rowY, 2);
+
+    tft.setTextColor(UI_TEXT_MUTED, UI_CARD);
+    tft.drawString(rows[i].action, 118, rowY, 2);
+
+    if (i < 4)
+    {
+      tft.drawFastHLine(20, rowY + 22, SCREEN_W - 40, UI_BORDER);
+    }
+    rowY += rowStep;
+  }
+
+  // Shared Bottom Action Bar (y = 197..231) - Right-aligned "Back" button matching subscreens
+  tft.drawFastHLine(10, 189, SCREEN_W - 20, UI_BORDER);
+  const int16_t backX = 224;
+  const int16_t backY = 197;
+  const int16_t backW = 86;
+  const int16_t backH = 34;
+  drawModernButton(backX, backY, backW, backH, "Back", UI_ACCENT_DK, UI_ACCENT, TFT_WHITE);
+
+  bool wasTouching = true;
+  uint16_t tx, ty;
+  while (true)
+  {
+    otaServer.handleClient();
+    bool touching = getTouchPixel(tx, ty);
+    if (touching && !wasTouching)
+    {
+      if (tx >= backX && tx <= (backX + backW) && ty >= backY && ty <= (backY + backH))
+      {
+        tone(AZTOUCH_BEEPER, 880, 60);
+        break;
+      }
+    }
+    wasTouching = touching;
+    delay(25);
+  }
+}
+
+
 void showWebUpdateInfoScreen(bool mdnsOk)
 {
   drawModernHeader("Web Settings & Update");
@@ -1265,8 +1343,8 @@ void showWebUpdateInfoScreen(bool mdnsOk)
 
 void drawConfigScreenBase(int16_t col1X, int16_t col2X, int16_t tileW,
                           int16_t row1Y, int16_t row2Y, int16_t row3Y,
-                          int16_t setupX, int16_t updateX, int16_t startX,
-                          int16_t btnY, int16_t btnW, int16_t btnH)
+                          int16_t setupX, int16_t updateX, int16_t helpX, int16_t startX,
+                          int16_t btnY, int16_t btnW, int16_t startW, int16_t btnH)
 {
   drawModernHeader("Settings & Options");
 
@@ -1292,10 +1370,11 @@ void drawConfigScreenBase(int16_t col1X, int16_t col2X, int16_t tileW,
   // Subtle divider above bottom action bar
   tft.drawFastHLine(10, 189, SCREEN_W - 20, UI_BORDER);
 
-  // Bottom 3-Button Action Bar (y = 197..231)
+  // Bottom 4-Button Action Bar (y = 197..231): Wi-Fi | Web | Help | Start (10s)
   drawModernButton(setupX, btnY, btnW, btnH, "Wi-Fi", UI_CARD, UI_ACCENT, UI_ACCENT);
-  drawModernButton(updateX, btnY, btnW, btnH, "Web Setup", UI_CARD, UI_ACCENT, TFT_WHITE);
-  drawModernButton(startX, btnY, btnW, btnH, "Start (10s)", UI_SUCCESS_DK, UI_SUCCESS, TFT_WHITE);
+  drawModernButton(updateX, btnY, btnW, btnH, "Web", UI_CARD, UI_ACCENT, TFT_WHITE);
+  drawModernButton(helpX, btnY, btnW, btnH, "Help", UI_CARD, UI_ACCENT, TFT_WHITE);
+  drawModernButton(startX, btnY, startW, btnH, "Start (10s)", UI_SUCCESS_DK, UI_SUCCESS, TFT_WHITE);
 }
 
 bool areWeConfiguring(bool mdnsOk)
@@ -1316,13 +1395,15 @@ bool areWeConfiguring(bool mdnsOk)
 
   const int16_t btnY = 197;
   const int16_t btnH = 34;
-  const int16_t btnW = 95;
+  const int16_t btnW = 66;
+  const int16_t startW = 87;
   const int16_t setupX = 10;
-  const int16_t updateX = 112;
-  const int16_t startX = 215;
+  const int16_t updateX = 81;
+  const int16_t helpX = 152;
+  const int16_t startX = 223;
 
   drawConfigScreenBase(col1X, col2X, tileW, row1Y, row2Y, row3Y,
-                       setupX, updateX, startX, btnY, btnW, btnH);
+                       setupX, updateX, helpX, startX, btnY, btnW, startW, btnH);
 
   uint16_t tx, ty;
   while ((millis() - startAt < 10000) && !triggered && !exitNow)
@@ -1333,7 +1414,7 @@ bool areWeConfiguring(bool mdnsOk)
     if (secsLeft != lastSecsLeft)
     {
       lastSecsLeft = secsLeft;
-      drawModernButton(startX, btnY, btnW, btnH, "Start (" + String(secsLeft) + "s)", UI_SUCCESS_DK, UI_SUCCESS, TFT_WHITE);
+      drawModernButton(startX, btnY, startW, btnH, "Start (" + String(secsLeft) + "s)", UI_SUCCESS_DK, UI_SUCCESS, TFT_WHITE);
     }
 
     bool touching = getTouchPixel(tx, ty);
@@ -1435,13 +1516,24 @@ bool areWeConfiguring(bool mdnsOk)
         tone(AZTOUCH_BEEPER, 880, 60);
         showWebUpdateInfoScreen(mdnsOk);
         drawConfigScreenBase(col1X, col2X, tileW, row1Y, row2Y, row3Y,
-                             setupX, updateX, startX, btnY, btnW, btnH);
+                             setupX, updateX, helpX, startX, btnY, btnW, startW, btnH);
         startAt = millis();
         lastSecsLeft = -1;
         wasTouching = true;
       }
-      // Button 3: Start
-      else if (tx >= startX && tx <= (startX + btnW) && ty >= btnY && ty <= (btnY + btnH))
+      // Button 3: Touch Help Guide
+      else if (tx >= helpX && tx <= (helpX + btnW) && ty >= btnY && ty <= (btnY + btnH))
+      {
+        tone(AZTOUCH_BEEPER, 880, 60);
+        showTouchHelpScreen();
+        drawConfigScreenBase(col1X, col2X, tileW, row1Y, row2Y, row3Y,
+                             setupX, updateX, helpX, startX, btnY, btnW, startW, btnH);
+        startAt = millis();
+        lastSecsLeft = -1;
+        wasTouching = true;
+      }
+      // Button 4: Start
+      else if (tx >= startX && tx <= (startX + startW) && ty >= btnY && ty <= (btnY + btnH))
       {
         tone(AZTOUCH_BEEPER, 880, 60);
         exitNow = true;
