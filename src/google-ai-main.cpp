@@ -1176,7 +1176,7 @@ void showWebUpdateInfoScreen(bool mdnsOk)
   tft.setFreeFont(nullptr);
   tft.setTextDatum(TL_DATUM);
   tft.setTextColor(UI_TEXT_MUTED, UI_BG);
-  tft.drawString("On a phone or PC, browse to one of the below :", 12, 36, 2);
+  tft.drawString("On a phone or PC, browse to one of:", 12, 36, 2);
 
   // Option A: Primary .local mDNS Address (y = 60..116)
   tft.fillRoundRect(10, 60, SCREEN_W - 20, 56, 8, UI_CARD);
