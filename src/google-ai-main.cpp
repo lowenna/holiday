@@ -17,6 +17,8 @@
 #include "NotoSansBold36.h"
 #include "fw_version.h"
 #include "ota_updater.h"
+#include <qrcode.h>
+#include <vector>
 
 
 /*
@@ -1167,58 +1169,74 @@ void drawToggleTile(int16_t tileX, int16_t tileY, int16_t tileW, const char *lab
   int16_t knobX = isEnabled ? (swX + swW - knobR - 3) : (swX + knobR + 3);
   tft.fillCircle(knobX, knobY, knobR, TFT_WHITE);
 }
+void drawQrCodeCard(int16_t cardX, int16_t cardY, int16_t cardSize, const String &payload)
+{
+  QRCode qrcode;
+  uint8_t version = 3; // Version 3 (29x29 modules) easily holds URLs & Wi-Fi strings up to 53 chars
+  std::vector<uint8_t> qrcodeData(qrcode_getBufferSize(version));
+  qrcode_initText(&qrcode, qrcodeData.data(), version, ECC_LOW, payload.c_str());
 
+  // White card background acts as a clean quiet zone for reliable phone camera scanning
+  tft.fillRoundRect(cardX, cardY, cardSize, cardSize, 8, TFT_WHITE);
+  tft.drawRoundRect(cardX, cardY, cardSize, cardSize, 8, UI_ACCENT);
+
+  int scale = (cardSize - 14) / qrcode.size;
+  if (scale < 2)
+    scale = 2;
+  int qrPixelSize = qrcode.size * scale;
+  int offsetX = cardX + ((cardSize - qrPixelSize) / 2);
+  int offsetY = cardY + ((cardSize - qrPixelSize) / 2);
+
+  for (uint8_t y = 0; y < qrcode.size; y++)
+  {
+    for (uint8_t x = 0; x < qrcode.size; x++)
+    {
+      if (qrcode_getModule(&qrcode, x, y))
+      {
+        tft.fillRect(offsetX + (x * scale), offsetY + (y * scale), scale, scale, TFT_BLACK);
+      }
+    }
+  }
+}
 void showWebUpdateInfoScreen(bool mdnsOk)
 {
   drawModernHeader("Web Settings & Update");
 
-  // Concise single-line subtitle that fits comfortably within 320px
+  // Left: Scannable QR code pointing directly to http://<IP> (y = 38..174)
+  String ipUrl = "http://" + WiFi.localIP().toString();
+  drawQrCodeCard(10, 38, 136, ipUrl);
+
+  // Right: Clear instructions + URLs for anyone on a PC (x = 156..310)
+  tft.fillRoundRect(154, 38, 156, 136, 8, UI_CARD);
+  tft.drawRoundRect(154, 38, 156, 136, 8, UI_BORDER);
+
   tft.setFreeFont(nullptr);
   tft.setTextDatum(TL_DATUM);
-  tft.setTextColor(UI_TEXT_MUTED, UI_BG);
-  tft.drawString("On a phone or PC, browse to one of:", 12, 36, 2);
-
-  // Option A: Primary .local mDNS Address (y = 60..116)
-  tft.fillRoundRect(10, 60, SCREEN_W - 20, 56, 8, UI_CARD);
-  tft.drawRoundRect(10, 60, SCREEN_W - 20, 56, 8, mdnsOk ? UI_ACCENT_DK : UI_BORDER);
-
-  tft.fillCircle(28, 88, 10, mdnsOk ? UI_ACCENT_DK : UI_CARD_ALT);
-  tft.drawCircle(28, 88, 10, mdnsOk ? UI_ACCENT : UI_BORDER);
-  tft.fillCircle(28, 88, 3, mdnsOk ? UI_ACCENT : UI_TEXT_MUTED);
-
-  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(UI_ACCENT, UI_CARD);
+  tft.drawString("Scan with phone", 164, 46, 2);
   tft.setTextColor(UI_TEXT_MUTED, UI_CARD);
-  tft.drawString("BY DEVICE NAME", 48, 68, 1);
+  tft.drawString("or browse to:", 164, 64, 1);
+
+  tft.drawFastHLine(162, 78, 140, UI_BORDER);
 
   if (mdnsOk)
   {
-    String hostUrl = "http://" + String(otaHostname) + ".local";
-    tft.setTextColor(UI_ACCENT, UI_CARD);
-    tft.drawString(hostUrl, 48, 85, 2);
+    tft.setTextColor(TFT_WHITE, UI_CARD);
+    tft.drawString(String(otaHostname) + ".local", 164, 86, 2);
   }
   else
   {
-    tft.setTextColor(TFT_SILVER, UI_CARD);
-    tft.drawString("mDNS unavailable - use IP below", 48, 85, 2);
+    tft.setTextColor(UI_TEXT_MUTED, UI_CARD);
+    tft.drawString("Use IP below:", 164, 86, 2);
   }
 
-  // Option B: Direct IP Address (y = 124..180)
-  tft.fillRoundRect(10, 124, SCREEN_W - 20, 56, 8, UI_CARD);
-  tft.drawRoundRect(10, 124, SCREEN_W - 20, 56, 8, UI_ACCENT_DK);
-
-  tft.fillCircle(28, 152, 10, UI_ACCENT_DK);
-  tft.drawCircle(28, 152, 10, UI_ACCENT);
-  tft.fillCircle(28, 152, 3, UI_ACCENT);
-
-  tft.setTextDatum(TL_DATUM);
-  tft.setTextColor(UI_TEXT_MUTED, UI_CARD);
-  tft.drawString("BY IP ADDRESS", 48, 132, 1);
-
-  String ipUrl = "http://" + WiFi.localIP().toString();
   tft.setTextColor(UI_ACCENT, UI_CARD);
-  tft.drawString(ipUrl, 48, 149, 2);
+  tft.drawString(WiFi.localIP().toString(), 164, 112, 2);
 
-  // Shared Bottom Action Bar (y = 197..231) - Right-aligned "Back" button matching Wi-Fi screen
+  tft.setTextColor(UI_TEXT_MUTED, UI_CARD);
+  tft.drawString("Same Wi-Fi required", 164, 146, 1);
+
+  // Shared Bottom Action Bar (y = 197..231)
   tft.drawFastHLine(10, 189, SCREEN_W - 20, UI_BORDER);
   const int16_t backX = 224;
   const int16_t backY = 197;
@@ -1226,7 +1244,6 @@ void showWebUpdateInfoScreen(bool mdnsOk)
   const int16_t backH = 34;
   drawModernButton(backX, backY, backW, backH, "Back", UI_ACCENT_DK, UI_ACCENT, TFT_WHITE);
 
-  // Wait for user to tap Back
   bool wasTouching = true;
   uint16_t tx, ty;
   while (true)
@@ -1934,39 +1951,46 @@ void drawPortalStepRow(int stepNum, int y, const char *title, const char *highli
 
 void drawSetupPortalScreen(const String &apName, bool showTimeoutHint)
 {
-  drawModernHeader("Wi-Fi Setup Hotspot", "192.168.4.1");
+  drawModernHeader("Wi-Fi Setup Hotspot");
 
-  // Elevated Step-by-Step Guide Card (y = 36..180)
-  tft.fillRoundRect(10, 36, SCREEN_W - 20, 144, 8, UI_CARD);
-  tft.drawRoundRect(10, 36, SCREEN_W - 20, 144, 8, UI_BORDER);
+  // Left: Scannable Wi-Fi Auto-Join QR Code (y = 38..174)
+  String wifiQrPayload = "WIFI:T:nopass;S:" + apName + ";;";
+  drawQrCodeCard(10, 38, 136, wifiQrPayload);
+
+  // Right: Step-by-Step Guide Card (x = 154..310)
+  tft.fillRoundRect(154, 38, 156, 136, 8, UI_CARD);
+  tft.drawRoundRect(154, 38, 156, 136, 8, UI_BORDER);
 
   tft.setFreeFont(nullptr);
   tft.setTextFont(2);
   tft.setTextSize(1);
+  tft.setTextDatum(TL_DATUM);
 
   // Step 1
-  drawPortalStepRow(1, 46, "Join Wi-Fi: ", apName.c_str());
+  tft.setTextColor(UI_ACCENT, UI_CARD);
+  tft.drawString("1. Scan QR to join", 163, 45, 2);
   tft.setTextColor(UI_TEXT_MUTED, UI_CARD);
-  tft.drawString("Open Wi-Fi settings on your phone or PC", 44, 66, 1);
+  tft.drawString("Or Wi-Fi: " + apName, 163, 63, 1);
 
-  tft.drawFastHLine(20, 82, SCREEN_W - 40, UI_BORDER);
+  tft.drawFastHLine(162, 78, 140, UI_BORDER);
 
   // Step 2
-  drawPortalStepRow(2, 90, "Open ", "192.168.4.1", " in browser");
-  tft.setTextColor(UI_TEXT_MUTED, UI_CARD);
-  tft.drawString("Appears automatically on most phones", 44, 110, 1);
+  tft.setTextColor(TFT_WHITE, UI_CARD);
+  tft.drawString("2. Open browser", 163, 85, 2);
+  tft.setTextColor(UI_ACCENT, UI_CARD);
+  tft.drawString("192.168.4.1", 163, 103, 1);
 
-  tft.drawFastHLine(20, 126, SCREEN_W - 40, UI_BORDER);
+  tft.drawFastHLine(162, 118, 140, UI_BORDER);
 
   // Step 3
-  drawPortalStepRow(3, 134, "Tap ", "Configure WiFi", " & Save");
+  tft.setTextColor(TFT_WHITE, UI_CARD);
+  tft.drawString("3. Configure WiFi", 163, 125, 2);
   tft.setTextColor(UI_TEXT_MUTED, UI_CARD);
-  tft.drawString("Select your home network & enter password", 44, 154, 1);
+  tft.drawString("Pick network & Save", 163, 143, 1);
 
   // Shared Bottom Action Bar (y = 197..231)
   tft.drawFastHLine(10, 189, SCREEN_W - 20, UI_BORDER);
 
-  // Left status pill for live countdown timer
   tft.fillRoundRect(10, 197, 206, 34, 7, UI_CARD);
   tft.drawRoundRect(10, 197, 206, 34, 7, UI_BORDER);
   if (showTimeoutHint)
@@ -1977,7 +2001,6 @@ void drawSetupPortalScreen(const String &apName, bool showTimeoutHint)
     tft.setTextDatum(TL_DATUM);
   }
 
-  // Right tactile Back button (matches Web Settings & Update screen)
   drawModernButton(224, 197, 86, 34, "Back", UI_ACCENT_DK, UI_ACCENT, TFT_WHITE);
 }
 
