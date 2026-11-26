@@ -277,3 +277,31 @@ void triggerCloudOTAFromWeb(const String &binUrl)
     return;
   performCloudOTA(binUrl);
 }
+
+String fetchRemoteVersionJson()
+{
+  if (WiFi.status() != WL_CONNECTED)
+    return "";
+
+  WiFiClientSecure client;
+  client.setInsecure();
+
+  HTTPClient http;
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  http.setTimeout(6000);
+
+  String checkUrl = String(VERSION_JSON_URL) + "?t=" + String(esp_random());
+  if (!http.begin(client, checkUrl))
+    return "";
+
+  int code = http.GET();
+  if (code != HTTP_CODE_OK)
+  {
+    http.end();
+    return "";
+  }
+
+  String payload = http.getString();
+  http.end();
+  return payload;
+}

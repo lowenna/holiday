@@ -3,3 +3,4 @@
 
 void checkAndPromptFirmwareUpdate();
 void triggerCloudOTAFromWeb(const String &binUrl);
+String fetchRemoteVersionJson();

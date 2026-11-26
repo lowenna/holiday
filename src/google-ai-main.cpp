@@ -285,13 +285,13 @@ bool setupOTA()
   // Main Web Dashboard: Holiday Settings + Firmware OTA
   otaServer.on("/", HTTP_GET, []()
                {
-    char dateBuf[12];
+    char dateBuf[16];
     snprintf(dateBuf, sizeof(dateBuf), "%04d-%02d-%02d", atoi(gYear), atoi(gMonth), atoi(gDay));
 
     char timeBuf[8];
     snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", atoi(gHour), atoi(gMins));
 
-    char bdayBuf[12];
+    char bdayBuf[16];
     snprintf(bdayBuf, sizeof(bdayBuf), "%04d-%02d-%02d", atoi(gYear), gBdayMonth, gBdayDay);
 
     String html = R"rawliteral(
@@ -396,7 +396,7 @@ bool setupOTA()
       ghStatus.textContent = 'Checking GitHub...';
       installBtn.style.display = 'none';
 
-      fetch('https://' + 'raw.' + '://githubusercontent.com' + Date.now())
+      fetch('/checkota')
         .then(function(r) {
           if (!r.ok) throw new Error('HTTP ' + r.status);
           return r.json();
@@ -467,7 +467,7 @@ bool setupOTA()
         return;
       }
       const formData = new FormData();
-      formData.append('update', fwInput.files[0]);
+      formData.append('update', fwInput.files.item(0));
 
       progWrap.style.display = 'block';
       progBar.style.width = '0%';
@@ -505,7 +505,7 @@ bool setupOTA()
 )rawliteral";
 
     otaServer.send(200, "text/html", html); });
-      // Trigger an immediate Birthday Celebration test on the display
+  // Trigger an immediate Birthday Celebration test on the display
   otaServer.on("/testbday", HTTP_POST, []()
                {
     triggerTestBirthday = true;
@@ -516,6 +516,19 @@ bool setupOTA()
                {
     triggerTestScreensaver = true;
     otaServer.send(200, "text/plain", "Screensaver triggered!"); });
+
+  // Proxy GitHub version.json check through the ESP32 to avoid browser CORS errors
+  otaServer.on("/checkota", HTTP_GET, []()
+               {
+    String json = fetchRemoteVersionJson();
+    if (json.length() > 0)
+    {
+      otaServer.send(200, "application/json", json);
+    }
+    else
+    {
+      otaServer.send(502, "text/plain", "GitHub unreachable");
+    } });
 
   // Trigger a Cloud OTA update from GitHub
   otaServer.on("/cloudota", HTTP_POST, []()
@@ -611,8 +624,6 @@ bool setupOTA()
   Serial.printf("Setup at: http://%s.local (IP: %s)\n", otaHostname, WiFi.localIP().toString().c_str());
   return mdnsOk;
 }
-
-
 
 
 void drawOtaProgressScreen(const char *statusText, int percent)
