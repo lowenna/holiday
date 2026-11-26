@@ -485,122 +485,180 @@ void drawHourlyForecastBar()
 
 void drawWeatherDetailPopup()
 {
-    const int16_t popW = 286;
-    const int16_t popH = 166;
-    const int16_t popX = (WX_SCREEN_W - popW) / 2;
-    const int16_t popY = 38;
+    // Shared Dark-Slate UI Palette
+    constexpr uint16_t WX_CARD       = 0x18E3; // Elevated dark slate card
+    constexpr uint16_t WX_CARD_ALT   = 0x10A2; // Recessed header/tile fill
+    constexpr uint16_t WX_BORDER     = 0x39E7; // Crisp slate hairline border
+    constexpr uint16_t WX_ACCENT     = 0x067F; // Modern sky-cyan accent
+    constexpr uint16_t WX_ACCENT_DK  = 0x02B0; // Deep cyan border/fill
+    constexpr uint16_t WX_SUCCESS    = 0x07E8; // Vibrant mint-green
+    constexpr uint16_t WX_DANGER     = 0xF986; // Soft coral-red
+    constexpr uint16_t WX_TEXT_MUTED = 0x9CD3; // Muted cool grey labels
 
-    tft.fillRoundRect(popX, popY, popW, popH, 8, TFT_NAVY);
-    tft.drawRoundRect(popX, popY, popW, popH, 8, TFT_CYAN);
-    tft.drawRoundRect(popX + 1, popY + 1, popW - 2, popH - 2, 7, TFT_DARKCYAN);
-    tft.fillRect(popX + 2, popY + 2, popW - 4, 24, TFT_DARKCYAN);
+    const int16_t popW = 292;
+    const int16_t popH = 172;
+    const int16_t popX = (WX_SCREEN_W - popW) / 2;
+    const int16_t popY = 34;
+
+    // 1. Elevated Dark-Slate Card Container
+    tft.fillRoundRect(popX, popY, popW, popH, 8, WX_CARD);
+    tft.drawRoundRect(popX, popY, popW, popH, 8, WX_ACCENT_DK);
+
+    // 2. Unified Card Header Bar (26px tall with left cyan accent pill)
+    tft.fillRoundRect(popX + 1, popY + 1, popW - 2, 26, 7, WX_CARD_ALT);
+    tft.fillRect(popX + 1, popY + 18, popW - 2, 9, WX_CARD_ALT); // Square bottom corners of header
+    tft.drawFastHLine(popX + 1, popY + 27, popW - 2, WX_BORDER);
+    tft.fillRoundRect(popX + 8, popY + 6, 4, 15, 2, WX_ACCENT);
 
     tft.setFreeFont(nullptr);
     tft.setTextFont(2);
     tft.setTextSize(1);
-    tft.setTextDatum(MC_DATUM);
-    tft.setTextColor(TFT_WHITE, TFT_DARKCYAN);
+    tft.setTextDatum(ML_DATUM);
+    tft.setTextColor(TFT_WHITE, WX_CARD_ALT);
+    tft.drawString(String(gWhere) + " Weather", popX + 18, popY + 14, 2);
 
-    String pageTag = (weatherPopupPage == 0) ? " (1/2)" : " (2/2)";
-    String title = String(gWhere) + " Weather" + pageTag;
-    tft.drawString(title, popX + (popW / 2), popY + 14, 2);
+    // Page indicator dots on right of header (Page 1 / Page 2)
+    int16_t dot1X = popX + popW - 26;
+    int16_t dot2X = popX + popW - 14;
+    int16_t dotY  = popY + 14;
+    tft.fillCircle(dot1X, dotY, 3, (weatherPopupPage == 0) ? WX_ACCENT : WX_BORDER);
+    tft.fillCircle(dot2X, dotY, 3, (weatherPopupPage == 1) ? WX_ACCENT : WX_BORDER);
 
-    // Current temperature & condition summary
-    tft.setTextColor(TFT_YELLOW, TFT_NAVY);
-    String summary = weatherTempStr + " deg " + weatherCondStr;
-    tft.drawString(summary, popX + (popW / 2), popY + 39, 2);
-    tft.drawFastHLine(popX + 14, popY + 52, popW - 28, TFT_DARKCYAN);
+    // 3. Centered Current Temp (with crisp degree circle) & Condition Summary
+    String condOnly = weatherCondStr;
+    if (condOnly.startsWith("C "))
+    {
+        condOnly = condOnly.substring(2);
+    }
 
+    int tempW = tft.textWidth(weatherTempStr, 2);
+    String suffixStr = "C  " + condOnly;
+    int sufW = tft.textWidth(suffixStr, 2);
+    int totalW = tempW + 6 + sufW;
+    int startX = popX + ((popW - totalW) / 2);
+    int sumY = popY + 41;
+
+    tft.setTextDatum(ML_DATUM);
+    tft.setTextColor(TFT_GOLD, WX_CARD);
+    tft.drawString(weatherTempStr, startX, sumY, 2);
+    tft.drawCircle(startX + tempW + 2, sumY - 4, 2, TFT_GOLD);
+    tft.drawString(suffixStr, startX + tempW + 6, sumY, 2);
+
+    tft.drawFastHLine(popX + 12, popY + 54, popW - 24, WX_BORDER);
+
+    // 4. Two-Column Metric Grid
     tft.setTextDatum(TL_DATUM);
     const int16_t col1X = popX + 14;
-    const int16_t col2X = popX + 148;
-    int16_t rowY = popY + 60;
+    const int16_t col2X = popX + 152;
+    int16_t rowY = popY + 62;
     const int16_t rowStep = 26;
+
+    // Subtle vertical divider between the two columns
+    tft.drawFastVLine(popX + (popW / 2), popY + 60, 74, WX_BORDER);
 
     if (weatherPopupPage == 0)
     {
         // PAGE 1: Feels Like, Humidity, Wind + Compass, Max UV, Sunrise & Sunset
-        tft.setTextColor(TFT_SILVER, TFT_NAVY);
+        tft.setTextColor(WX_TEXT_MUTED, WX_CARD);
         tft.drawString("Feels:", col1X, rowY, 2);
-        tft.setTextColor(TFT_WHITE, TFT_NAVY);
-        tft.drawString(String(weatherFeelsLikeC) + " C", col1X + 46, rowY, 2);
+        tft.setTextColor(TFT_WHITE, WX_CARD);
+        String feelsStr = String(weatherFeelsLikeC);
+        tft.drawString(feelsStr, col1X + 46, rowY, 2);
+        int fw = tft.textWidth(feelsStr, 2);
+        tft.drawCircle(col1X + 46 + fw + 2, rowY + 3, 2, TFT_WHITE);
+        tft.drawString("C", col1X + 46 + fw + 6, rowY, 2);
 
-        tft.setTextColor(TFT_SILVER, TFT_NAVY);
+        tft.setTextColor(WX_TEXT_MUTED, WX_CARD);
         tft.drawString("Humid:", col2X, rowY, 2);
-        tft.setTextColor(TFT_CYAN, TFT_NAVY);
+        tft.setTextColor(WX_ACCENT, WX_CARD);
         tft.drawString(String(weatherHumidityPct) + "%", col2X + 48, rowY, 2);
 
         rowY += rowStep;
         int windMph = (int)roundf(weatherWindKmh * 0.621371f);
-        tft.setTextColor(TFT_SILVER, TFT_NAVY);
+        tft.setTextColor(WX_TEXT_MUTED, WX_CARD);
         tft.drawString("Wind:", col1X, rowY, 2);
-        tft.setTextColor(TFT_WHITE, TFT_NAVY);
+        tft.setTextColor(TFT_WHITE, WX_CARD);
         tft.drawString(String(windMph) + "mph " + degToCompass(weatherWindDirDeg), col1X + 42, rowY, 2);
 
-        uint16_t uvCol = TFT_GREEN;
-        if (weatherUvMax >= 8.0f) uvCol = TFT_RED;
+        uint16_t uvCol = WX_SUCCESS;
+        if (weatherUvMax >= 8.0f) uvCol = WX_DANGER;
         else if (weatherUvMax >= 6.0f) uvCol = TFT_ORANGE;
         else if (weatherUvMax >= 3.0f) uvCol = TFT_YELLOW;
 
-        tft.setTextColor(TFT_SILVER, TFT_NAVY);
+        tft.setTextColor(WX_TEXT_MUTED, WX_CARD);
         tft.drawString("Max UV:", col2X, rowY, 2);
-        tft.setTextColor(uvCol, TFT_NAVY);
+        tft.setTextColor(uvCol, WX_CARD);
         tft.drawString(String(weatherUvMax, 1), col2X + 54, rowY, 2);
 
         rowY += rowStep;
-        tft.setTextColor(TFT_SILVER, TFT_NAVY);
+        tft.setTextColor(WX_TEXT_MUTED, WX_CARD);
         tft.drawString("Rise:", col1X, rowY, 2);
-        tft.setTextColor(TFT_GOLD, TFT_NAVY);
+        tft.setTextColor(TFT_GOLD, WX_CARD);
         tft.drawString(weatherSunriseStr, col1X + 46, rowY, 2);
 
-        tft.setTextColor(TFT_SILVER, TFT_NAVY);
+        tft.setTextColor(WX_TEXT_MUTED, WX_CARD);
         tft.drawString("Set:", col2X, rowY, 2);
-        tft.setTextColor(TFT_ORANGE, TFT_NAVY);
+        tft.setTextColor(TFT_ORANGE, WX_CARD);
         tft.drawString(weatherSunsetStr, col2X + 48, rowY, 2);
 
+        // Footer hint bar
+        tft.drawFastHLine(popX + 12, popY + popH - 22, popW - 24, WX_BORDER);
         tft.setTextDatum(MC_DATUM);
-        tft.setTextColor(TFT_LIGHTGREY, TFT_NAVY);
-        tft.drawString("Tap for Marine & Sky details", popX + (popW / 2), popY + popH - 13, 1);
+        tft.setTextColor(WX_TEXT_MUTED, WX_CARD);
+        tft.drawString("Tap for Marine & Sky details", popX + (popW / 2), popY + popH - 11, 1);
     }
     else
     {
         // PAGE 2: Sea Temp, Wave Height, Gusts, Clouds, Pressure & Daylight Length
-        tft.setTextColor(TFT_SILVER, TFT_NAVY);
+        tft.setTextColor(WX_TEXT_MUTED, WX_CARD);
         tft.drawString("Sea:", col1X, rowY, 2);
-        tft.setTextColor(TFT_CYAN, TFT_NAVY);
-        tft.drawString(hasMarineData ? (String(weatherSeaTempC, 1) + " C") : "N/A", col1X + 42, rowY, 2);
+        tft.setTextColor(WX_ACCENT, WX_CARD);
+        if (hasMarineData)
+        {
+            String seaStr = String(weatherSeaTempC, 1);
+            tft.drawString(seaStr, col1X + 42, rowY, 2);
+            int sw = tft.textWidth(seaStr, 2);
+            tft.drawCircle(col1X + 42 + sw + 2, rowY + 3, 2, WX_ACCENT);
+            tft.drawString("C", col1X + 42 + sw + 6, rowY, 2);
+        }
+        else
+        {
+            tft.drawString("N/A", col1X + 42, rowY, 2);
+        }
 
-        tft.setTextColor(TFT_SILVER, TFT_NAVY);
+        tft.setTextColor(WX_TEXT_MUTED, WX_CARD);
         tft.drawString("Waves:", col2X, rowY, 2);
-        tft.setTextColor(TFT_SKYBLUE, TFT_NAVY);
+        tft.setTextColor(TFT_SKYBLUE, WX_CARD);
         tft.drawString(hasMarineData ? (String(weatherWaveHeightM, 1) + " m") : "N/A", col2X + 50, rowY, 2);
 
         rowY += rowStep;
         int gustMph = (int)roundf(weatherWindGustsKmh * 0.621371f);
-        tft.setTextColor(TFT_SILVER, TFT_NAVY);
+        tft.setTextColor(WX_TEXT_MUTED, WX_CARD);
         tft.drawString("Gusts:", col1X, rowY, 2);
-        tft.setTextColor(TFT_WHITE, TFT_NAVY);
+        tft.setTextColor(TFT_WHITE, WX_CARD);
         tft.drawString(String(gustMph) + " mph", col1X + 46, rowY, 2);
 
-        tft.setTextColor(TFT_SILVER, TFT_NAVY);
+        tft.setTextColor(WX_TEXT_MUTED, WX_CARD);
         tft.drawString("Cloud:", col2X, rowY, 2);
-        tft.setTextColor(TFT_WHITE, TFT_NAVY);
+        tft.setTextColor(TFT_WHITE, WX_CARD);
         tft.drawString(String(weatherCloudCoverPct) + "%", col2X + 50, rowY, 2);
 
         rowY += rowStep;
-        tft.setTextColor(TFT_SILVER, TFT_NAVY);
+        tft.setTextColor(WX_TEXT_MUTED, WX_CARD);
         tft.drawString("Press:", col1X, rowY, 2);
-        tft.setTextColor(TFT_GREEN, TFT_NAVY);
+        tft.setTextColor(WX_SUCCESS, WX_CARD);
         tft.drawString(String(weatherPressureHpa) + "hPa", col1X + 46, rowY, 2);
 
-        tft.setTextColor(TFT_SILVER, TFT_NAVY);
+        tft.setTextColor(WX_TEXT_MUTED, WX_CARD);
         tft.drawString("Light:", col2X, rowY, 2);
-        tft.setTextColor(TFT_GOLD, TFT_NAVY);
+        tft.setTextColor(TFT_GOLD, WX_CARD);
         tft.drawString(calcDaylightDuration(weatherSunriseStr, weatherSunsetStr), col2X + 46, rowY, 2);
 
+        // Footer hint bar
+        tft.drawFastHLine(popX + 12, popY + popH - 22, popW - 24, WX_BORDER);
         tft.setTextDatum(MC_DATUM);
-        tft.setTextColor(TFT_LIGHTGREY, TFT_NAVY);
-        tft.drawString("Tap anywhere to close", popX + (popW / 2), popY + popH - 13, 1);
+        tft.setTextColor(WX_TEXT_MUTED, WX_CARD);
+        tft.drawString("Tap anywhere to close", popX + (popW / 2), popY + popH - 11, 1);
     }
 
     tft.setTextDatum(TL_DATUM);
