@@ -12,7 +12,6 @@ extern bool gRainAsPercent;
 extern void fillSpriteWithMaldivesSlice(TFT_eSprite &spr, int16_t screenY, int16_t sliceH);
 extern void displaySSIDAndWhen();
 extern void drawStaticBackgroundImage();
-extern void displayLines();
 extern void drawWhere(bool isArrived);
 
 int16_t WHERE_Y = 40;
@@ -674,7 +673,6 @@ void closeWeatherDetailPopup(bool isArrived)
     tft.fillScreen(TFT_BLACK);
     displaySSIDAndWhen();
     drawStaticBackgroundImage();
-    displayLines();
     drawWhere(isArrived);
     drawHourlyForecastBar();
 }
