@@ -12,6 +12,7 @@
 #include <XPT2046_Touchscreen.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
+#include <sys/time.h>
 #include "audio.h"
 #include "maldives.h" // Hexdump of 320x240 JPG background
 #include "NotoSansBold36.h"
@@ -2400,6 +2401,107 @@ void openInAppSetup()
   lastInteractionMillis = millis();
 }
 
+
+// Converts a UTC broken-down struct tm to Unix epoch seconds (timegm replacement)
+time_t utcTmToEpoch(const struct tm &t)
+{
+  int year = t.tm_year + 1900;
+  int month = t.tm_mon + 1; // 1..12
+  int day = t.tm_mday;
+
+  if (month <= 2)
+  {
+    year -= 1;
+    month += 12;
+  }
+
+  long days = 365L * year + year / 4 - year / 100 + year / 400 +
+              (153 * (month - 3) + 2) / 5 + day - 719469L;
+  return (time_t)(days * 86400L + t.tm_hour * 3600L + t.tm_min * 60L + t.tm_sec);
+}
+
+// Fallback time sync using HTTP/HTTPS "Date" response header when UDP NTP is blocked
+// Fallback time sync using HTTP/HTTPS "Date" response header when UDP NTP is blocked
+bool syncTimeFromHttpHeader()
+{
+  const char *urls[] = {
+      "http://google.com",
+      "https://google.com"};
+
+  for (int u = 0; u < 2; u++)
+  {
+    HTTPClient http;
+    http.setTimeout(4000);
+    const char *headerKeys[] = {"Date"};
+    http.collectHeaders(headerKeys, 1);
+
+    bool begun = false;
+    WiFiClient plainClient;
+    WiFiClientSecure secClient;
+
+    if (u == 0)
+    {
+      begun = http.begin(plainClient, urls[u]);
+    }
+    else
+    {
+      secClient.setInsecure();
+      begun = http.begin(secClient, urls[u]);
+    }
+
+    if (!begun)
+      continue;
+
+    int code = http.sendRequest("HEAD");
+    String dateHdr = http.header("Date");
+    http.end();
+
+    // Expected format: "Fri, 27 Nov 2026 17:20:00 GMT"
+    if (code > 0 && dateHdr.length() >= 25)
+    {
+      int commaIdx = dateHdr.indexOf(',');
+      String d = (commaIdx >= 0) ? dateHdr.substring(commaIdx + 1) : dateHdr;
+      d.trim(); // "27 Nov 2026 17:20:00 GMT"
+
+      int day = d.substring(0, 2).toInt();
+      String monStr = d.substring(3, 6);
+      int year = d.substring(7, 11).toInt();
+      int hour = d.substring(12, 14).toInt();
+      int min = d.substring(15, 17).toInt();
+      int sec = d.substring(18, 20).toInt();
+
+      const char *months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                              "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+      int mon = -1;
+      for (int m = 0; m < 12; m++)
+      {
+        if (monStr.equalsIgnoreCase(months[m]))
+        {
+          mon = m;
+          break;
+        }
+      }
+
+      if (mon >= 0 && year >= 2024 && day >= 1 && day <= 31)
+      {
+        struct tm utcTm = {};
+        utcTm.tm_year = year - 1900;
+        utcTm.tm_mon = mon;
+        utcTm.tm_mday = day;
+        utcTm.tm_hour = hour;
+        utcTm.tm_min = min;
+        utcTm.tm_sec = sec;
+
+        time_t epoch = utcTmToEpoch(utcTm);
+        struct timeval tv = {.tv_sec = epoch, .tv_usec = 0};
+        settimeofday(&tv, nullptr);
+        Serial.printf("[TIME] Synced via HTTP Date header (%s): %s\n", urls[u], dateHdr.c_str());
+        return true;
+      }
+    }
+  }
+  return false;
+}
 // ============================================================================
 // Setup & Loop
 // ============================================================================
@@ -2570,46 +2672,69 @@ void setup()
         custom_hol_where.getValue());
   }
 
-  // 7. Sync NTP time with smooth 300ms animated progressive dots
-  configTzTime(MY_TZ, "pool.ntp.org", "time.nist.gov");
+  // 7. Sync NTP time on the boot screen, falling back to HTTPS Date header if NTP is blocked
+  configTzTime(MY_TZ, "pool.ntp.org", "time.nist.gov", "://google.com");
 
   struct tm timeinfo;
   unsigned long ntpStartMs = millis();
   unsigned long lastNtpDotMs = 0;
+  unsigned long lastHttpFallbackMs = 0;
   int ntpDotStep = 0;
   bool timeSynced = false;
+  bool usedHttpFallback = false;
 
-  while (millis() - ntpStartMs < 6000UL)
+  while (!timeSynced)
   {
-    if (getLocalTime(&timeinfo, 50))
+    otaServer.handleClient(); // Keep web dashboard & OTA responsive while waiting
+
+    if (getLocalTime(&timeinfo, 50) && (timeinfo.tm_year + 1900) >= 2024)
     {
       timeSynced = true;
       break;
     }
+
     unsigned long now = millis();
+
+    // After 8s of waiting on NTP, try HTTP/HTTPS Date header every 8s (handles hotel/resort firewalls)
+    if ((now - ntpStartMs >= 8000UL) && (now - lastHttpFallbackMs >= 8000UL))
+    {
+      lastHttpFallbackMs = now;
+      updateBootStepRow(1, BOOT_STEP_WARN, "NTP blocked, trying HTTPS...", "Fetching web time");
+      if (syncTimeFromHttpHeader() && getLocalTime(&timeinfo, 50) && (timeinfo.tm_year + 1900) >= 2024)
+      {
+        usedHttpFallback = true;
+        timeSynced = true;
+        break;
+      }
+      // Also re-poke NTP in case it was just a slow connection
+      configTzTime(MY_TZ, "pool.ntp.org", "time.nist.gov", "://google.com");
+    }
+
     if (now - lastNtpDotMs >= 300UL)
     {
       lastNtpDotMs = now;
       ntpDotStep = (ntpDotStep % 3) + 1;
       String dots = (ntpDotStep == 1) ? "." : ((ntpDotStep == 2) ? ".." : "...");
-      updateBootStepRow(1, BOOT_STEP_ACTIVE, "Getting Internet time" + dots, "Syncing UK clock (GMT/BST)");
+
+      if (now - ntpStartMs < 8000UL)
+      {
+        updateBootStepRow(1, BOOT_STEP_ACTIVE, "Getting Internet time" + dots, "Syncing UK clock (GMT/BST)");
+      }
+      else
+      {
+        int waitSecs = (int)((now - ntpStartMs) / 1000UL);
+        updateBootStepRow(1, BOOT_STEP_WARN, "Retrying time sync" + dots, "NTP + HTTPS (" + String(waitSecs) + "s)");
+      }
     }
+    delay(20);
   }
 
-  if (!timeSynced)
-  {
-    updateBootStepRow(1, BOOT_STEP_WARN, "Time sync delayed", "Retrying in background...");
-    delay(1500);
-  }
-  else
-  {
-    String timeReadyStr = "Synced: " +
-                          String(timeinfo.tm_hour < 10 ? "0" : "") + String(timeinfo.tm_hour) + ":" +
-                          String(timeinfo.tm_min < 10 ? "0" : "") + String(timeinfo.tm_min) + ":" +
-                          String(timeinfo.tm_sec < 10 ? "0" : "") + String(timeinfo.tm_sec);
-    updateBootStepRow(1, BOOT_STEP_DONE, "Internet time synced", timeReadyStr);
-    delay(650); // Brief pause so both green icons are clearly visible
-  }
+  String timeReadyStr = (usedHttpFallback ? "HTTPS: " : "Synced: ") +
+                        String(timeinfo.tm_hour < 10 ? "0" : "") + String(timeinfo.tm_hour) + ":" +
+                        String(timeinfo.tm_min < 10 ? "0" : "") + String(timeinfo.tm_min) + ":" +
+                        String(timeinfo.tm_sec < 10 ? "0" : "") + String(timeinfo.tm_sec);
+  updateBootStepRow(1, BOOT_STEP_DONE, "Internet time synced", timeReadyStr);
+  delay(650); // Brief pause so both green icons are clearly visible
 
   tft.fillScreen(TFT_BLACK);
 
@@ -2655,11 +2780,7 @@ void loop()
   struct tm timeinfo;
   if (!getLocalTime(&timeinfo, 100))
   {
-    if (!inScreenSaver && !inDimClockMode)
-    {
-      showScreenError("Time Error", "Retrying...", false, 0);
-    }
-    delay(500);
+    delay(200);
     return;
   }
 
