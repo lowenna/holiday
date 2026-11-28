@@ -99,7 +99,7 @@ constexpr int16_t TOP_BAR_H = 24; // Top bar overlay area (y = 0..23)
 constexpr int16_t TOP_LINE_Y = 24;
 constexpr int16_t BG_IMAGE_Y = 0;          // Draw background starting at top edge (y = 0)
 constexpr int16_t BG_IMAGE_MAX_H = 240;  // Allow full 240px screen height
-constexpr int16_t COUNTDOWN_Y = 170;
+constexpr int16_t COUNTDOWN_Y = 169;
 constexpr int16_t COUNTDOWN_H = 48;
 constexpr int16_t BOT_LINE_Y = 216;
 constexpr int16_t BOT_TEXT_Y = 216; // Bottom bar overlay area (y = 216..239)
@@ -2508,6 +2508,149 @@ bool syncTimeFromHttpHeader()
   }
   return false;
 }
+
+bool isClockModePillVisible = false;
+unsigned long clockModePillShownMs = 0;
+constexpr unsigned long CLOCK_MODE_PILL_MS = 2500UL;
+
+void restoreClockModePillBackground()
+{
+  if (inScreenSaver)
+  {
+    // Restore the twilight strip below the night-sky LED clock (y = 70..95)
+    tft.fillRect(0, 70, SCREEN_W, 12, 0x0085);
+    tft.fillRect(0, 82, SCREEN_W, 8, 0x0108);
+    tft.fillRect(0, 90, SCREEN_W, 6, 0x018B);
+  }
+  else if (inDimClockMode)
+  {
+    tft.fillRect(0, 148, SCREEN_W, 24, TFT_BLACK);
+  }
+  else
+  {
+    // Restore the bottom 22px slice of the Maldives background (y = 218..239)
+    const int16_t stripY = 218;
+    const int16_t stripH = SCREEN_H - stripY;
+    TFT_eSprite stripSpr(&tft);
+    stripSpr.setColorDepth(16);
+    if (stripSpr.createSprite(SCREEN_W, stripH) != nullptr)
+    {
+      fillSpriteWithMaldivesSlice(stripSpr, stripY, stripH);
+      stripSpr.pushSprite(0, stripY);
+      stripSpr.deleteSprite();
+    }
+  }
+}
+
+void hideClockModePill()
+{
+  if (!isClockModePillVisible)
+    return;
+
+  isClockModePillVisible = false;
+  restoreClockModePillBackground();
+}
+
+void showClockModePill(bool isArrived)
+{
+  int activeMode = countdownClockMode;
+  if (isArrived && activeMode == 0)
+  {
+    activeMode = 1;
+  }
+
+  String label;
+  if (activeMode == 1 && hasDestUtcOffset)
+  {
+    label = String(gWhere) + " Time";
+  }
+  else if (activeMode == 1 || activeMode == 2)
+  {
+    label = "UK Time";
+  }
+  else
+  {
+    label = "Countdown";
+  }
+
+  int16_t stripY = inScreenSaver ? 70 : (inDimClockMode ? 148 : 218);
+  int16_t stripH = inScreenSaver ? 26 : (inDimClockMode ? 24 : (SCREEN_H - stripY));
+  int16_t pillY  = inScreenSaver ? 4  : (inDimClockMode ? 3  : 2);
+  int16_t pillH  = 20;
+
+  // 1. Prepare 16-bit background strip matching the active screen mode
+  TFT_eSprite bgSpr(&tft);
+  bgSpr.setColorDepth(16);
+  if (bgSpr.createSprite(SCREEN_W, stripH) == nullptr)
+    return;
+
+  if (inScreenSaver)
+  {
+    bgSpr.fillRect(0, 0, SCREEN_W, 12, 0x0085);
+    bgSpr.fillRect(0, 12, SCREEN_W, 8, 0x0108);
+    bgSpr.fillRect(0, 20, SCREEN_W, 6, 0x018B);
+  }
+  else if (inDimClockMode)
+  {
+    bgSpr.fillSprite(TFT_BLACK);
+  }
+  else
+  {
+    fillSpriteWithMaldivesSlice(bgSpr, stripY, stripH);
+  }
+
+  // 2. Draw pill shape, border, dot & text onto an 8-bit foreground mask
+  TFT_eSprite fgSpr(&tft);
+  fgSpr.setColorDepth(8);
+  if (fgSpr.createSprite(SCREEN_W, stripH) == nullptr)
+  {
+    bgSpr.deleteSprite();
+    return;
+  }
+  fgSpr.fillSprite(TFT_BLACK);
+  fgSpr.setFreeFont(nullptr);
+  fgSpr.setTextFont(2);
+  fgSpr.setTextSize(1);
+
+  int16_t textW = fgSpr.textWidth(label, 2);
+  int16_t pillW = textW + 26;
+  int16_t pillX = (SCREEN_W - pillW) / 2;
+
+  fgSpr.fillRoundRect(pillX, pillY, pillW, pillH, pillH / 2, TFT_NAVY);
+  fgSpr.drawRoundRect(pillX, pillY, pillW, pillH, pillH / 2, TFT_DARKCYAN);
+  fgSpr.fillCircle(pillX + 10, pillY + (pillH / 2), 3, TFT_CYAN);
+
+  fgSpr.setTextDatum(ML_DATUM);
+  fgSpr.setTextColor(TFT_WHITE, TFT_NAVY);
+  fgSpr.drawString(label, pillX + 18, pillY + (pillH / 2), 2);
+  fgSpr.setTextDatum(TL_DATUM);
+
+  // 3. Alpha-blend with lighter translucency (95) over background
+  const uint8_t cardBgAlpha = 95;
+  const uint8_t detailAlpha = 225;
+
+  for (int16_t y = 0; y < stripH; y++)
+  {
+    for (int16_t x = 0; x < SCREEN_W; x++)
+    {
+      uint16_t fgPix = fgSpr.readPixel(x, y);
+      if (fgPix != TFT_BLACK)
+      {
+        uint16_t bgPix = bgSpr.readPixel(x, y);
+        uint8_t alpha = (fgPix <= 0x001F) ? cardBgAlpha : detailAlpha;
+        bgSpr.drawPixel(x, y, tft.alphaBlend(alpha, fgPix, bgPix));
+      }
+    }
+  }
+
+  fgSpr.deleteSprite();
+  bgSpr.pushSprite(0, stripY);
+  bgSpr.deleteSprite();
+
+  isClockModePillVisible = true;
+  clockModePillShownMs = millis();
+}
+
 void cycleCountdownClockMode(bool isArrived)
 {
   if (isArrived)
@@ -2528,6 +2671,7 @@ void cycleCountdownClockMode(bool isArrived)
 
   const int beeps[] = {784, 1047, 1319};
   tone(AZTOUCH_BEEPER, beeps[countdownClockMode], 45);
+  showClockModePill(isArrived);
 }
 
 // ============================================================================
@@ -2827,10 +2971,24 @@ void loop()
     lastBacklightBoostMs = millis();
   }
 
+  // Auto-hide the clock mode pill after 2.5 seconds
+  if (isClockModePillVisible && (millis() - clockModePillShownMs >= CLOCK_MODE_PILL_MS))
+  {
+    if (!isWeatherPopupOpen && !isBirthdayPopupOpen && !isNotePopupOpen)
+    {
+      hideClockModePill();
+    }
+    else
+    {
+      isClockModePillVisible = false;
+    }
+  }
+
   // Handle web dashboard "Test Birthday Celebration" button
   if (triggerTestBirthday)
   {
     triggerTestBirthday = false;
+    isClockModePillVisible = false;
     lastInteractionMillis = millis();
     lastBacklightBoostMs = millis();
     if (inScreenSaver)
@@ -2850,6 +3008,7 @@ void loop()
   if (triggerTestScreensaver)
   {
     triggerTestScreensaver = false;
+    isClockModePillVisible = false;
     isWeatherPopupOpen = false;
     isBirthdayPopupOpen = false;
     isNotePopupOpen = false;
@@ -2874,6 +3033,7 @@ void loop()
   {
     activeScreenNote = incomingScreenNote;
     incomingScreenNote = "";
+    isClockModePillVisible = false;
     lastInteractionMillis = millis();
     lastBacklightBoostMs = millis();
 
@@ -2918,6 +3078,7 @@ void loop()
       prefs.putInt("bdayyr", curYear);
       prefs.end();
 
+      isClockModePillVisible = false;
       lastInteractionMillis = millis();
       lastBacklightBoostMs = millis();
       if (inScreenSaver)
@@ -2960,6 +3121,7 @@ void loop()
       }
       else if (handleScreenSaverTap())
       {
+        isClockModePillVisible = false;
         tone(AZTOUCH_BEEPER, 1047, 50);
         wakeFromScreenSaver(isArrived);
         lastRenderedSec = 0;
@@ -2984,6 +3146,7 @@ void loop()
   // Wake from clock-only dim mode on any tap, absorbing the wake-up tap
   if (inDimClockMode && freshTap)
   {
+    isClockModePillVisible = false;
     wakeFromDimClockMode(isArrived);
     lastRenderedSec = 0;
     freshTap = false;
@@ -3023,6 +3186,7 @@ void loop()
   {
     if (tx >= 255)
     {
+      isClockModePillVisible = false;
       tone(AZTOUCH_BEEPER, 880, 60);
       openInAppSetup();
       lastRenderedSec = 0;
@@ -3030,6 +3194,7 @@ void loop()
     }
     else if (isBirthdayToday(rawlocal))
     {
+      isClockModePillVisible = false;
       triggerBirthdayCelebration(true);
       lastRenderedSec = 0;
       freshTap = false;
@@ -3038,6 +3203,7 @@ void loop()
 
   if (gScreensaverEnabled && !inScreenSaver && !isNotePopupOpen && (millis() - lastInteractionMillis >= SCREENSAVER_TIMEOUT_MS))
   {
+    isClockModePillVisible = false;
     isWeatherPopupOpen = false;
     isBirthdayPopupOpen = false;
     inDimClockMode = false;
@@ -3050,6 +3216,7 @@ void loop()
 
   if (freshTap && !inScreenSaver && !inDimClockMode && !isBirthdayPopupOpen && !isNotePopupOpen && handleWeatherForecastTouch(tx, ty))
   {
+    isClockModePillVisible = false;
     tone(AZTOUCH_BEEPER, 880, 45);
     lastRenderedSec = 0;
     freshTap = false;
@@ -3076,6 +3243,7 @@ void loop()
       if (!holidayCelebrated)
       {
         holidayCelebrated = true;
+        isClockModePillVisible = false;
         isWeatherPopupOpen = false;
         isBirthdayPopupOpen = false;
         isNotePopupOpen = false;
