@@ -14,11 +14,11 @@ extern void displaySSIDAndWhen();
 extern void drawStaticBackgroundImage();
 extern void drawWhere(bool isArrived);
 
-int16_t WHERE_Y = 40;
+int16_t WHERE_Y = 22;
 int16_t WHERE_H = 26;
 
 static constexpr int16_t WX_SCREEN_W = 320;
-static constexpr int16_t HOURLY_Y = 91;
+static constexpr int16_t HOURLY_Y = 74;
 static constexpr int16_t HOURLY_H = 61;
 
 String weatherTempStr = "";
@@ -698,8 +698,8 @@ bool handleWeatherForecastTouch(uint16_t tx, uint16_t ty)
         return true;
     }
 
-    // 2. Tapping the bottom-left current weather summary opens Page 1 of the detail popup
-    if (weatherTempStr.length() > 0 && ty >= 220 && tx >= 20 && tx <= 185)
+    // 2. Tapping the top current weather summary opens Page 1 of the detail popup
+    if (weatherTempStr.length() > 0 && ty <= 32 && tx >= 20 && tx <= 250)
     {
         isWeatherPopupOpen = true;
         weatherPopupPage = 0;

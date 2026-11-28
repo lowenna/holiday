@@ -1,2 +1,2 @@
 #pragma once
-#define FW_VERSION "2026.11.28.1324"
+#define FW_VERSION "2026.11.28.1346"

@@ -75,6 +75,8 @@ extern long destUtcOffsetSec;                                     // weather.cpp
 extern bool hasDestUtcOffset;                                     // weather.cpp
 // 0 = Time Left (DD.HH:MM:SS), 1 = Destination Local Time (HH:MM:SS), 2 = UK Local Time (HH:MM:SS)
 int countdownClockMode = 0;
+void fillSpriteWithMaldivesSlice(TFT_eSprite &spr, int16_t screenY, int16_t sliceH);
+void drawWifiSignalBars(int x, int y);
 
 // ============================================================================
 // Hardware & Layout Constants
@@ -648,7 +650,9 @@ String formatPrettyDateTime(time_t t, bool includeSeconds = false)
 }
 void drawSettingsGearIcon(TFT_eSprite &spr, int cx, int cy, uint16_t col)
 {
-  // 1. Draw 8 thick rectangular teeth around the perimeter (outer radius ~6.5px)
+  uint16_t centerBg = spr.readPixel(cx, cy);
+
+  // 1. Draw 8 thick rectangular teeth around the perimeter
   for (int i = 0; i < 8; i++)
   {
     float rad = (i * 45.0f) * 0.0174533f;
@@ -661,8 +665,8 @@ void drawSettingsGearIcon(TFT_eSprite &spr, int cx, int cy, uint16_t col)
   spr.fillCircle(cx, cy, 5, col);
   spr.drawCircle(cx, cy, 4, TFT_DARKGREY);
 
-  // 3. Hollow centre axle hole
-  spr.fillCircle(cx, cy, 2, TFT_BLACK);
+  // 3. Hollow centre axle hole blended with the sky behind it
+  spr.fillCircle(cx, cy, 2, centerBg);
 }
 
 struct tm getActiveLocalTm(time_t rawLocal)
@@ -854,27 +858,90 @@ void displayCurrentTimeSprite(time_t rawLocal)
 {
   fillSpriteWithMaldivesSlice(topTimeSprite, 0, TOP_BAR_H);
 
+  const int16_t midY = TOP_BAR_H / 2;
+  drawWifiSignalBars(4, midY - 7);
+
   topTimeSprite.setFreeFont(nullptr);
   topTimeSprite.setTextFont(2);
   topTimeSprite.setTextSize(1);
-  topTimeSprite.setTextDatum(MC_DATUM);
+  topTimeSprite.setTextDatum(ML_DATUM);
 
-  int centerX = (SCREEN_W - 20) / 2;
-  int centerY = TOP_BAR_H / 2;
+  int x = 25;
+  const int maxTextX = SCREEN_W - 24; // Keep clear of the settings gear icon
 
-  // On your birthday, float "HAPPY BIRTHDAY!" cleanly over the sky
-  if (isBirthdayToday(rawLocal))
+  // On your birthday, alternate "HAPPY BIRTHDAY!" every 4 seconds with the status line
+  if (isBirthdayToday(rawLocal) && ((rawLocal / 4) % 2 == 1))
   {
     topTimeSprite.setTextColor(TFT_NAVY);
-    topTimeSprite.drawString("HAPPY BIRTHDAY!", centerX + 1, centerY + 1, 2);
+    topTimeSprite.drawString("HAPPY BIRTHDAY!", x + 1, midY + 1, 2);
     topTimeSprite.setTextColor(TFT_GOLD);
-    topTimeSprite.drawString("HAPPY BIRTHDAY!", centerX, centerY, 2);
+    topTimeSprite.drawString("HAPPY BIRTHDAY!", x, midY, 2);
+  }
+  else
+  {
+    // 1. If arrived, show "Day N" first
+    if (rawLocal > 1700000000L && rawhol > 0)
+    {
+      double elapsedSecs = difftime(rawLocal, rawhol);
+      if (elapsedSecs >= 0)
+      {
+        int holidayDayNum = ((int)elapsedSecs / 86400) + 1;
+        String dayLabel = "Day " + String(holidayDayNum);
+
+        topTimeSprite.setTextColor(TFT_NAVY);
+        topTimeSprite.drawString(dayLabel, x + 1, midY + 1, 2);
+        topTimeSprite.setTextColor(TFT_GOLD);
+        topTimeSprite.drawString(dayLabel, x, midY, 2);
+
+        x += topTimeSprite.textWidth(dayLabel, 2) + 8;
+      }
+    }
+
+    // 2. Followed by the 1-line weather summary (or Wi-Fi SSID if weather is off/pending)
+    if (gWeatherEnabled && weatherTempStr.length() > 0 && x < maxTextX)
+    {
+      topTimeSprite.setTextColor(TFT_NAVY);
+      topTimeSprite.drawString(weatherTempStr, x + 1, midY + 1, 2);
+      topTimeSprite.setTextColor(TFT_WHITE);
+      topTimeSprite.drawString(weatherTempStr, x, midY, 2);
+
+      int tempW = topTimeSprite.textWidth(weatherTempStr, 2);
+      topTimeSprite.drawCircle(x + tempW + 3, midY - 3, 2, TFT_NAVY);
+      topTimeSprite.drawCircle(x + tempW + 2, midY - 4, 2, TFT_WHITE);
+
+      int condX = x + tempW + 6;
+      String condDisp = weatherCondStr;
+      while (condDisp.length() > 0 && (condX + topTimeSprite.textWidth(condDisp, 2)) > maxTextX)
+      {
+        condDisp.remove(condDisp.length() - 1);
+      }
+
+      if (condDisp.length() > 0)
+      {
+        topTimeSprite.setTextColor(TFT_NAVY);
+        topTimeSprite.drawString(condDisp, condX + 1, midY + 1, 2);
+        topTimeSprite.setTextColor(TFT_WHITE);
+        topTimeSprite.drawString(condDisp, condX, midY, 2);
+      }
+    }
+    else if (x < maxTextX)
+    {
+      String ssidDisp = WiFi.SSID();
+      while (ssidDisp.length() > 0 && (x + topTimeSprite.textWidth(ssidDisp, 2)) > maxTextX)
+      {
+        ssidDisp.remove(ssidDisp.length() - 1);
+      }
+      topTimeSprite.setTextColor(TFT_NAVY);
+      topTimeSprite.drawString(ssidDisp, x + 1, midY + 1, 2);
+      topTimeSprite.setTextColor(TFT_WHITE);
+      topTimeSprite.drawString(ssidDisp, x, midY, 2);
+    }
   }
 
   topTimeSprite.setTextDatum(TL_DATUM);
 
-  // Float settings gear icon in the top-right corner over the background
-  drawSettingsGearIcon(topTimeSprite, SCREEN_W - 11, centerY, TFT_WHITE);
+  // Settings gear icon on the far right
+  drawSettingsGearIcon(topTimeSprite, SCREEN_W - 11, midY, TFT_WHITE);
 
   topTimeSprite.pushSprite(0, 0);
 }
@@ -2066,70 +2133,21 @@ void drawWifiSignalBars(int x, int y)
     }
   }
 
-  tft.fillRect(x, y, 18, 14, TFT_BLACK);
   for (int i = 0; i < 4; i++)
   {
     int barH = 3 + (i * 3);
     int barX = x + (i * 4);
     int barY = y + (13 - barH);
     uint16_t col = (i < bars) ? activeCol : TFT_DARKGREY;
-    tft.fillRect(barX, barY, 3, barH, col);
+    topTimeSprite.fillRect(barX, barY, 3, barH, col);
   }
 }
 
 void displaySSIDAndWhen()
 {
-  const int16_t barH = SCREEN_H - BOT_TEXT_Y;
-  const int16_t midY = BOT_TEXT_Y + (barH / 2);
-
-  tft.fillRect(0, BOT_TEXT_Y, SCREEN_W, barH, TFT_BLACK);
-  drawWifiSignalBars(2, midY - 7);
-
-  tft.setFreeFont(nullptr);
-  tft.setTextFont(2);
-  tft.setTextSize(1);
-  tft.setTextDatum(ML_DATUM);
-
-  if (gWeatherEnabled && weatherTempStr.length() > 0)
-  {
-    int x = 23;
-    tft.setTextColor(TFT_CYAN, TFT_BLACK);
-    tft.drawString(weatherTempStr, x, midY, 2);
-
-    int tempW = tft.textWidth(weatherTempStr, 2);
-    tft.drawCircle(x + tempW + 2, midY - 4, 2, TFT_CYAN);
-
-    // Keep "C Partly cloudy" in TFT_CYAN to match the temperature and degree symbol
-    tft.drawString(weatherCondStr, x + tempW + 6, midY, 2);
-  }
-  else
-  {
-    tft.setTextColor(TFT_GREEN, TFT_BLACK);
-    tft.drawString(WiFi.SSID(), 23, midY, 2);
-  }
-
-  // Show target holiday date/time before departure, or "Day X of Holiday" once arrived
-  time_t nowEpoch = time(nullptr);
-  if (nowEpoch > 1700000000L)
-  {
-    double elapsedSecs = difftime(nowEpoch, rawhol);
-    if (elapsedSecs < 0)
-    {
-      tft.setTextColor(TFT_GREEN, TFT_BLACK);
-      tft.setTextDatum(MR_DATUM);
-      tft.drawString(formatPrettyDateTime(rawhol), SCREEN_W - 2, midY, 2);
-    }
-    else
-    {
-      int holidayDayNum = ((int)elapsedSecs / 86400) + 1;
-      String dayLabel = "Day " + String(holidayDayNum); 
-      tft.setTextColor(TFT_GOLD, TFT_BLACK);
-      tft.setTextDatum(MR_DATUM);
-      tft.drawString(dayLabel, SCREEN_W - 2, midY, 2);
-    }
-  }
-  tft.setTextDatum(TL_DATUM);
+  displayCurrentTimeSprite(time(nullptr));
 }
+
 void wakeFromScreenSaver(bool isArrived)
 {
   inScreenSaver = false;
@@ -2779,7 +2797,6 @@ void loop()
 {
   static time_t lastRenderedSec = 0;
   static bool blinkState = false;
-  static int lastHolidayDayShown = -1;
 
   otaServer.handleClient();
   if (otaInProgress)
@@ -2999,7 +3016,7 @@ void loop()
   }
 
   // Top bar touch handling:
-  // 1. Larger top-right gear icon zone (x >= 255, y <= 40) opens setup
+  // 1. Top-right gear icon zone (x >= 255, y <= 40) opens setup
   // 2. On your birthday, tapping the top bar replays the celebration
   if (freshTap && !inScreenSaver && !inDimClockMode && !isWeatherPopupOpen && !isBirthdayPopupOpen && !isNotePopupOpen && ty <= 40)
   {
@@ -3055,17 +3072,6 @@ void loop()
     {
       diffSecs = 0;
 
-      // Refresh the bottom-right "Day X of Holiday" label whenever the day number changes
-      int currentHolidayDay = ((int)difftime(rawlocal, rawhol) / 86400) + 1;
-      if (currentHolidayDay != lastHolidayDayShown)
-      {
-        lastHolidayDayShown = currentHolidayDay;
-        if (!inDimClockMode && !inScreenSaver && !isWeatherPopupOpen && !isBirthdayPopupOpen && !isNotePopupOpen)
-        {
-          displaySSIDAndWhen();
-        }
-      }
-
       if (!holidayCelebrated)
       {
         holidayCelebrated = true;
@@ -3110,11 +3116,6 @@ void loop()
     if (!inDimClockMode && !inScreenSaver)
     {
       displayCurrentTimeSprite(rawlocal);
-
-      if (rawlocal % 10 == 0)
-      {
-        drawWifiSignalBars(2, 221);
-      }
     }
   }
   delay(25);
