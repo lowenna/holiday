@@ -34,14 +34,15 @@
  https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/src/ota_updater.cpp
  https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/include/maldives.h
  https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/platformio.ini
- https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/src/publish.cmd
- https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/scripts/publish_firmware.py
  https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/include/ota_updater.h
  https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/include/otawebpage.h
  https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/include/audio.h
- https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/include/weather.h
- https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/include/eyes.h
+ https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/include/FreeSans7pt7b.h
  https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/include/fw_version.h
+ https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/include/NotoSansBold36.h
+ https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/publish.cmd
+ https://raw.githubusercontent.com/lowenna/holiday/refs/heads/master/scripts/publish_firmware.py
+ 
  
  Can you confirm you can see these files. If so, please confirm what they do so I can be sure
  you can help me update it. 
