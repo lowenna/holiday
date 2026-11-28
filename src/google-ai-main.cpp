@@ -74,7 +74,8 @@ extern bool hasCachedCoords;                                      // weather.cpp
 extern long destUtcOffsetSec;                                     // weather.cpp
 extern bool hasDestUtcOffset;                                     // weather.cpp
 bool showDestLocalTime = false;
-bool showCountdownAsLocalTime = false;
+// 0 = Time Left (DD.HH:MM:SS), 1 = Destination Local Time (HH:MM:SS), 2 = UK Local Time (HH:MM:SS)
+int countdownClockMode = 0;
 
 // ============================================================================
 // Hardware & Layout Constants
@@ -1494,41 +1495,57 @@ void drawCountdownLeft(int days, int hours, int mins, int secs, bool showColon, 
   countdownFgSprite.fillSprite(TFT_BLACK);
   countdownFgSprite.setTextSize(1);
   countdownFgSprite.setTextFont(7);
-  countdownFgSprite.setTextColor(TFT_DARKCYAN);
 
-  if (isArrived || (showCountdownAsLocalTime && hasDestUtcOffset))
+  // If arrived, never show "time left" (mode 0); fall back to Destination Time (mode 1)
+  int activeMode = countdownClockMode;
+  if (isArrived && activeMode == 0)
   {
-    // Show live local time at the destination in crisp cyan (HH:MM:SS)
-    time_t destEpoch = hasDestUtcOffset ? (rawlocal + getEffectiveDestOffsetSec()) : rawlocal;
+    activeMode = 1;
+  }
 
-    struct tm destTm;
-    gmtime_r(&destEpoch, &destTm);
+  if (activeMode == 1 || activeMode == 2)
+  {
+    struct tm dispTm;
+    if (activeMode == 1 && hasDestUtcOffset)
+    {
+      // Destination local time
+      time_t destEpoch = rawlocal + getEffectiveDestOffsetSec();
+      gmtime_r(&destEpoch, &dispTm);
+      countdownFgSprite.setTextColor(TFT_DARKCYAN);
+    }
+    else
+    {
+      // UK local time (or fallback if destination UTC offset is unavailable)
+      localtime_r(&rawlocal, &dispTm);
+      countdownFgSprite.setTextColor(TFT_GREEN);
+    }
 
     char sep = showColon ? ':' : ' ';
     if (inDimClockMode)
     {
-      char buf[16];
-      snprintf(buf, sizeof(buf), "%02d%c%02d%c%02d", destTm.tm_hour, sep, destTm.tm_min, sep, destTm.tm_sec);
-      countdownFgSprite.drawCentreString(buf, SCREEN_W / 2, 0, 7);
+      std::array<char, 16> buf{};
+      snprintf(buf.data(), buf.size(), "%02d%c%02d%c%02d", dispTm.tm_hour, sep, dispTm.tm_min, sep, dispTm.tm_sec);
+      countdownFgSprite.drawCentreString(buf.data(), SCREEN_W / 2, 0, 7);
     }
     else
     {
       countdownFgSprite.setCursor(54, 0);
-      countdownFgSprite.printf("%02d%c", destTm.tm_hour, sep);
+      countdownFgSprite.printf("%02d%c", dispTm.tm_hour, sep);
       countdownFgSprite.setCursor(132, 0);
-      countdownFgSprite.printf("%02d%c", destTm.tm_min, sep);
+      countdownFgSprite.printf("%02d%c", dispTm.tm_min, sep);
       countdownFgSprite.setCursor(210, 0);
-      countdownFgSprite.printf("%02d", destTm.tm_sec);
+      countdownFgSprite.printf("%02d", dispTm.tm_sec);
     }
   }
   else
   {
+    countdownFgSprite.setTextColor(TFT_DARKCYAN);
     char sep = showColon ? ':' : ' ';
     if (inDimClockMode)
     {
-      char buf[20];
-      snprintf(buf, sizeof(buf), "%02d.%02d%c%02d%c%02d", days, hours, sep, mins, sep, secs);
-      countdownFgSprite.drawCentreString(buf, SCREEN_W / 2, 0, 7);
+      std::array<char, 20> buf{};
+      snprintf(buf.data(), buf.size(), "%02d.%02d%c%02d%c%02d", days, hours, sep, mins, sep, secs);
+      countdownFgSprite.drawCentreString(buf.data(), SCREEN_W / 2, 0, 7);
     }
     else
     {
@@ -1567,7 +1584,6 @@ void drawCountdownLeft(int days, int hours, int mins, int secs, bool showColon, 
   int16_t targetY = inDimClockMode ? ((SCREEN_H - COUNTDOWN_H) / 2) : COUNTDOWN_Y;
   countdownFgSprite.pushSprite(0, targetY);
 }
-
 // ============================================================================
 // Configuration & Preferences
 // ============================================================================
@@ -2503,6 +2519,28 @@ bool syncTimeFromHttpHeader()
   }
   return false;
 }
+void cycleCountdownClockMode(bool isArrived)
+{
+  if (isArrived)
+  {
+    // Once arrived, toggle only between Destination (1) and UK (2)
+    countdownClockMode = (countdownClockMode == 2) ? 1 : 2;
+  }
+  else
+  {
+    // Before arrival: 0 (Time Left) -> 1 (Destination) -> 2 (UK) -> 0
+    countdownClockMode = (countdownClockMode + 1) % 3;
+    // Skip Destination mode if UTC offset hasn't been fetched yet
+    if (countdownClockMode == 1 && !hasDestUtcOffset)
+    {
+      countdownClockMode = 2;
+    }
+  }
+
+  const int beeps[] = {784, 1047, 1319};
+  tone(AZTOUCH_BEEPER, beeps[countdownClockMode], 45);
+}
+
 // ============================================================================
 // Setup & Loop
 // ============================================================================
@@ -2766,6 +2804,7 @@ void setup()
 
   Serial.println("setup() complete");
 }
+
 void loop()
 {
   static time_t lastRenderedSec = 0;
@@ -2906,6 +2945,7 @@ void loop()
       lastRenderedSec = 0;
     }
   }
+
   // Smoothly update PWM backlight & clock-only dim mode every loop tick (~40 Hz)
   updateAutoBacklight(isArrived);
 
@@ -2919,16 +2959,14 @@ void loop()
       drawWeatherBadge();
     }
   }
-
   if (inScreenSaver)
   {
     if (freshTap)
     {
-      // Tapping the 7-segment LED clock in the night sky toggles countdown vs local time
-      if (ty <= 78 && !isArrived && hasDestUtcOffset)
+      // Tapping the 7-segment LED clock in the night sky cycles clock modes
+      if (ty <= 78)
       {
-        showCountdownAsLocalTime = !showCountdownAsLocalTime;
-        tone(AZTOUCH_BEEPER, showCountdownAsLocalTime ? 1047 : 784, 45);
+        cycleCountdownClockMode(isArrived);
         lastRenderedSec = 0; // Force immediate clock redraw below
       }
       else if (handleScreenSaverTap())
@@ -3035,13 +3073,12 @@ void loop()
     freshTap = false;
   }
 
-  // Main countdown area touch handling (before arrival):
-  // Toggle between countdown (DD.HH:MM:SS) and destination local time (HH:MM:SS in cyan)
-  if (freshTap && !inScreenSaver && !inDimClockMode && !isWeatherPopupOpen && !isBirthdayPopupOpen && !isNotePopupOpen && !isArrived && hasDestUtcOffset &&
+  // Main countdown area touch handling:
+  // Cycles between Time Left (before arrival), Destination local time, and UK local time
+  if (freshTap && !inScreenSaver && !inDimClockMode && !isWeatherPopupOpen && !isBirthdayPopupOpen && !isNotePopupOpen &&
       ty >= COUNTDOWN_Y && ty <= (COUNTDOWN_Y + COUNTDOWN_H))
   {
-    showCountdownAsLocalTime = !showCountdownAsLocalTime;
-    tone(AZTOUCH_BEEPER, showCountdownAsLocalTime ? 1047 : 784, 45);
+    cycleCountdownClockMode(isArrived);
     lastRenderedSec = 0;
   }
 

@@ -1,9 +1,10 @@
 #include <TFT_eSPI.h>
 #include <time.h>
+#include <array>
 
 extern TFT_eSPI tft;
 extern TFT_eSprite countdownFgSprite;
-extern bool showCountdownAsLocalTime;
+extern int countdownClockMode;
 extern bool hasDestUtcOffset;
 extern long getEffectiveDestOffsetSec();
 
@@ -120,7 +121,6 @@ static void drawStaticBeachSky(int driftOffset)
     tft.fillRect(0, 82, CRAB_SCR_W, 8, 0x0108);
     tft.fillRect(0, 90, CRAB_SCR_W, 6, 0x018B);
 }
-
 // Render the 7-segment LED countdown or local time cleanly over the night sky (y = 22..69)
 void drawScreenSaverClock(int days, int hours, int mins, int secs, bool showColon, bool isArrived, time_t rawlocal, int driftOffset)
 {
@@ -135,24 +135,39 @@ void drawScreenSaverClock(int days, int hours, int mins, int secs, bool showColo
     // 3. Draw 7-segment LED digits ON TOP in the foreground
     countdownFgSprite.setTextSize(1);
     countdownFgSprite.setTextFont(7);
-    countdownFgSprite.setTextColor(TFT_DARKCYAN);
+
+    int activeMode = countdownClockMode;
+    if (isArrived && activeMode == 0)
+    {
+        activeMode = 1;
+    }
 
     char sep = showColon ? ':' : ' ';
-    if (isArrived || (showCountdownAsLocalTime && hasDestUtcOffset))
+    if (activeMode == 1 || activeMode == 2)
     {
-        time_t destEpoch = hasDestUtcOffset ? (rawlocal + getEffectiveDestOffsetSec()) : rawlocal;
-        struct tm destTm;
-        gmtime_r(&destEpoch, &destTm);
+        struct tm dispTm;
+        if (activeMode == 1 && hasDestUtcOffset)
+        {
+            time_t destEpoch = rawlocal + getEffectiveDestOffsetSec();
+            gmtime_r(&destEpoch, &dispTm);
+            countdownFgSprite.setTextColor(TFT_DARKCYAN);
+        }
+        else
+        {
+            localtime_r(&rawlocal, &dispTm);
+            countdownFgSprite.setTextColor(TFT_GREEN);
+        }
 
-        char buf[16];
-        snprintf(buf, sizeof(buf), "%02d%c%02d%c%02d", destTm.tm_hour, sep, destTm.tm_min, sep, destTm.tm_sec);
-        countdownFgSprite.drawCentreString(buf, CRAB_SCR_W / 2, 0, 7);
+        std::array<char, 16> buf{};
+        snprintf(buf.data(), buf.size(), "%02d%c%02d%c%02d", dispTm.tm_hour, sep, dispTm.tm_min, sep, dispTm.tm_sec);
+        countdownFgSprite.drawCentreString(buf.data(), CRAB_SCR_W / 2, 0, 7);
     }
     else
     {
-        char buf[20];
-        snprintf(buf, sizeof(buf), "%02d.%02d%c%02d%c%02d", days, hours, sep, mins, sep, secs);
-        countdownFgSprite.drawCentreString(buf, CRAB_SCR_W / 2, 0, 7);
+        countdownFgSprite.setTextColor(TFT_DARKCYAN);
+        std::array<char, 20> buf{};
+        snprintf(buf.data(), buf.size(), "%02d.%02d%c%02d%c%02d", days, hours, sep, mins, sep, secs);
+        countdownFgSprite.drawCentreString(buf.data(), CRAB_SCR_W / 2, 0, 7);
     }
 
     countdownFgSprite.pushSprite(0, SS_CLOCK_Y);
