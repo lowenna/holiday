@@ -14,11 +14,11 @@ extern void displaySSIDAndWhen();
 extern void drawStaticBackgroundImage();
 extern void drawWhere(bool isArrived);
 
-int16_t WHERE_Y = 22;
+int16_t WHERE_Y = 36;
 int16_t WHERE_H = 26;
 
 static constexpr int16_t WX_SCREEN_W = 320;
-static constexpr int16_t HOURLY_Y = 74;
+static constexpr int16_t HOURLY_Y = 92;
 static constexpr int16_t HOURLY_H = 61;
 
 String weatherTempStr = "";
@@ -324,20 +324,11 @@ void drawHourlyForecastBar()
     const uint8_t cardBgAlpha = 135;
     const uint8_t detailAlpha = 225;
 
-    TFT_eSprite hSpr(&tft);
-    hSpr.setColorDepth(16);
-    if (hSpr.createSprite(WX_SCREEN_W, HOURLY_H) == nullptr)
-    {
-        Serial.println("[WX] hSpr alloc failed");
-        return;
-    }
-    fillSpriteWithMaldivesSlice(hSpr, HOURLY_Y, HOURLY_H);
-
+    // 1. Draw all cards, icons, text & dots onto an 8-bit foreground mask (only ~19.5 KB)
     TFT_eSprite fgSpr(&tft);
     fgSpr.setColorDepth(8);
     if (fgSpr.createSprite(WX_SCREEN_W, HOURLY_H) == nullptr)
     {
-        hSpr.deleteSprite();
         Serial.println("[WX] fgSpr alloc failed");
         return;
     }
@@ -462,23 +453,41 @@ void drawHourlyForecastBar()
         }
     }
 
-    for (int16_t y = 0; y < HOURLY_H; y++)
+    // 2. Blend & push in two ~31px 16-bit bands (~19.8 KB max) so heap allocation never fails
+    const int16_t bandH = 31;
+    TFT_eSprite bandSpr(&tft);
+    bandSpr.setColorDepth(16);
+    if (bandSpr.createSprite(WX_SCREEN_W, bandH) == nullptr)
     {
-        for (int16_t x = 0; x < WX_SCREEN_W; x++)
-        {
-            uint16_t fgPix = fgSpr.readPixel(x, y);
-            if (fgPix != TFT_BLACK)
-            {
-                uint16_t bgPix = hSpr.readPixel(x, y);
-                uint8_t alpha = (fgPix <= 0x001F) ? cardBgAlpha : detailAlpha;
-                hSpr.drawPixel(x, y, tft.alphaBlend(alpha, fgPix, bgPix));
-            }
-        }
+        fgSpr.deleteSprite();
+        Serial.println("[WX] bandSpr alloc failed");
+        return;
     }
 
+    for (int16_t yOff = 0; yOff < HOURLY_H; yOff += bandH)
+    {
+        int16_t curH = min((int16_t)bandH, (int16_t)(HOURLY_H - yOff));
+        fillSpriteWithMaldivesSlice(bandSpr, HOURLY_Y + yOff, curH);
+
+        for (int16_t y = 0; y < curH; y++)
+        {
+            for (int16_t x = 0; x < WX_SCREEN_W; x++)
+            {
+                uint16_t fgPix = fgSpr.readPixel(x, yOff + y);
+                if (fgPix != TFT_BLACK)
+                {
+                    uint16_t bgPix = bandSpr.readPixel(x, y);
+                    uint8_t alpha = (fgPix <= 0x001F) ? cardBgAlpha : detailAlpha;
+                    bandSpr.drawPixel(x, y, tft.alphaBlend(alpha, fgPix, bgPix));
+                }
+            }
+        }
+
+        bandSpr.pushSprite(0, HOURLY_Y + yOff);
+    }
+
+    bandSpr.deleteSprite();
     fgSpr.deleteSprite();
-    hSpr.pushSprite(0, HOURLY_Y);
-    hSpr.deleteSprite();
 }
 
 

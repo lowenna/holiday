@@ -99,7 +99,7 @@ constexpr int16_t TOP_BAR_H = 24; // Top bar overlay area (y = 0..23)
 constexpr int16_t TOP_LINE_Y = 24;
 constexpr int16_t BG_IMAGE_Y = 0;          // Draw background starting at top edge (y = 0)
 constexpr int16_t BG_IMAGE_MAX_H = 240;  // Allow full 240px screen height
-constexpr int16_t COUNTDOWN_Y = 158;
+constexpr int16_t COUNTDOWN_Y = 170;
 constexpr int16_t COUNTDOWN_H = 48;
 constexpr int16_t BOT_LINE_Y = 216;
 constexpr int16_t BOT_TEXT_Y = 216; // Bottom bar overlay area (y = 216..239)
@@ -1554,7 +1554,7 @@ void drawCountdownLeft(int days, int hours, int mins, int secs, bool showColon, 
     {
       // UK local time (or fallback if destination UTC offset is unavailable)
       localtime_r(&rawlocal, &dispTm);
-      countdownFgSprite.setTextColor(TFT_GREEN);
+      countdownFgSprite.setTextColor(TFT_DARKCYAN);
     }
 
     char sep = showColon ? ':' : ' ';
@@ -1621,6 +1621,7 @@ void drawCountdownLeft(int days, int hours, int mins, int secs, bool showColon, 
   int16_t targetY = inDimClockMode ? ((SCREEN_H - COUNTDOWN_H) / 2) : COUNTDOWN_Y;
   countdownFgSprite.pushSprite(0, targetY);
 }
+
 // ============================================================================
 // Configuration & Preferences
 // ============================================================================

@@ -155,7 +155,7 @@ void drawScreenSaverClock(int days, int hours, int mins, int secs, bool showColo
         else
         {
             localtime_r(&rawlocal, &dispTm);
-            countdownFgSprite.setTextColor(TFT_GREEN);
+            countdownFgSprite.setTextColor(TFT_DARKCYAN);
         }
 
         std::array<char, 16> buf{};
