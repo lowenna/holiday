@@ -93,14 +93,14 @@ constexpr int16_t TOUCH_MIN_Z = 250;
 // Screen layout coordinates (320x240 landscape)
 constexpr int16_t SCREEN_W = 320;
 constexpr int16_t SCREEN_H = 240;
-constexpr int16_t TOP_BAR_H = 24; // Full 24px black gap above photo (y = 0..23)
+constexpr int16_t TOP_BAR_H = 24; // Top bar overlay area (y = 0..23)
 constexpr int16_t TOP_LINE_Y = 24;
-constexpr int16_t BG_IMAGE_Y = 24;
-constexpr int16_t BG_IMAGE_MAX_H = 209;
+constexpr int16_t BG_IMAGE_Y = 0;          // Draw background starting at top edge (y = 0)
+constexpr int16_t BG_IMAGE_MAX_H = 240;  // Allow full 240px screen height
 constexpr int16_t COUNTDOWN_Y = 158;
 constexpr int16_t COUNTDOWN_H = 48;
 constexpr int16_t BOT_LINE_Y = 216;
-constexpr int16_t BOT_TEXT_Y = 216; // Full 24px black gap below photo (y = 216..239)
+constexpr int16_t BOT_TEXT_Y = 216; // Bottom bar overlay area (y = 216..239)
 
 extern int16_t WHERE_Y;
 extern unsigned long WEATHER_INTERVAL_MS;
