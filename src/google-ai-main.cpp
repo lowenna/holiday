@@ -73,7 +73,6 @@ extern String weatherCondStr;                                     // weather.cpp
 extern bool hasCachedCoords;                                      // weather.cpp
 extern long destUtcOffsetSec;                                     // weather.cpp
 extern bool hasDestUtcOffset;                                     // weather.cpp
-bool showDestLocalTime = false;
 // 0 = Time Left (DD.HH:MM:SS), 1 = Destination Local Time (HH:MM:SS), 2 = UK Local Time (HH:MM:SS)
 int countdownClockMode = 0;
 
@@ -220,6 +219,7 @@ void drawStaticBackgroundImage();
 void drawWhere(bool isArrived);
 void drawOtaProgressScreen(const char *statusText, int percent);
 void drawModernHeader(const char *title, const char *badgeText = nullptr);
+void fillSpriteWithMaldivesSlice(TFT_eSprite &spr, int16_t screenY, int16_t sliceH);
 
 void handleOTAUpload()
 {
@@ -852,7 +852,8 @@ void closeBirthdayCelebration(bool isArrived)
 
 void displayCurrentTimeSprite(time_t rawLocal)
 {
-  topTimeSprite.fillSprite(TFT_BLACK);
+  fillSpriteWithMaldivesSlice(topTimeSprite, 0, TOP_BAR_H);
+
   topTimeSprite.setFreeFont(nullptr);
   topTimeSprite.setTextFont(2);
   topTimeSprite.setTextSize(1);
@@ -861,67 +862,36 @@ void displayCurrentTimeSprite(time_t rawLocal)
   int centerX = (SCREEN_W - 20) / 2;
   int centerY = TOP_BAR_H / 2;
 
-  // On your birthday, alternate "HAPPY BIRTHDAY!" every 4 seconds with the live clock
-  if (isBirthdayToday(rawLocal) && ((rawLocal / 4) % 2 == 1))
+  // On your birthday, float "HAPPY BIRTHDAY!" cleanly over the sky
+  if (isBirthdayToday(rawLocal))
   {
-    topTimeSprite.setTextColor(TFT_GOLD, TFT_BLACK);
+    topTimeSprite.setTextColor(TFT_NAVY);
+    topTimeSprite.drawString("HAPPY BIRTHDAY!", centerX + 1, centerY + 1, 2);
+    topTimeSprite.setTextColor(TFT_GOLD);
     topTimeSprite.drawString("HAPPY BIRTHDAY!", centerX, centerY, 2);
-  }
-  else if (showDestLocalTime && hasDestUtcOffset)
-  {
-    time_t destEpoch = rawLocal + getEffectiveDestOffsetSec();
-    struct tm destTm;
-    gmtime_r(&destEpoch, &destTm);
-
-    const char *days[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
-    const char *months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-
-    int dDay = destTm.tm_mday;
-    const char *dSuffix = "th";
-    if (dDay % 100 < 11 || dDay % 100 > 13)
-    {
-      if (dDay % 10 == 1)
-        dSuffix = "st";
-      else if (dDay % 10 == 2)
-        dSuffix = "nd";
-      else if (dDay % 10 == 3)
-        dSuffix = "rd";
-    }
-
-    String timeStr = String(gWhere) + " " + String(days[destTm.tm_wday]) + " " +
-                     String(dDay) + dSuffix + " " + String(months[destTm.tm_mon]) + " " +
-                     (destTm.tm_hour < 10 ? "0" : "") + String(destTm.tm_hour) + ":" +
-                     (destTm.tm_min < 10 ? "0" : "") + String(destTm.tm_min) + ":" +
-                     (destTm.tm_sec < 10 ? "0" : "") + String(destTm.tm_sec);
-
-    topTimeSprite.setTextColor(TFT_CYAN, TFT_BLACK);
-    topTimeSprite.drawString(timeStr, centerX, centerY, 2);
-  }
-  else
-  {
-    topTimeSprite.setTextColor(TFT_GREEN, TFT_BLACK);
-    topTimeSprite.drawString(formatPrettyDateTime(rawLocal, true), centerX, centerY, 2);
   }
 
   topTimeSprite.setTextDatum(TL_DATUM);
 
-  // Realistic settings gear aligned vertically with the centred text
-  drawSettingsGearIcon(topTimeSprite, SCREEN_W - 11, centerY, TFT_SILVER);
+  // Float settings gear icon in the top-right corner over the background
+  drawSettingsGearIcon(topTimeSprite, SCREEN_W - 11, centerY, TFT_WHITE);
 
   topTimeSprite.pushSprite(0, 0);
 }
 
 void initSprites()
 {
-  topTimeSprite.setColorDepth(8);
+  topTimeSprite.setColorDepth(16);
   topTimeSprite.createSprite(SCREEN_W, TOP_BAR_H);
+  topTimeSprite.setSwapBytes(true);
+
   countdownBgSprite.setColorDepth(16);
   countdownBgSprite.createSprite(SCREEN_W, COUNTDOWN_H);
   countdownBgSprite.setSwapBytes(true);
   countdownBgSprite.fillSprite(TFT_BLACK);
   TJpgDec.setCallback(tftOutputCountdownBg);
   TJpgDec.drawJpg(0, BG_IMAGE_Y - COUNTDOWN_Y, maldives__esp32__jpg, sizeof(maldives__esp32__jpg));
+
   countdownFgSprite.setColorDepth(16);
   countdownFgSprite.createSprite(SCREEN_W, COUNTDOWN_H);
   countdownFgSprite.setSwapBytes(true);
@@ -1044,9 +1014,9 @@ void showTouchHelpScreen()
   };
 
   const HelpRow rows[] = {
-      {"Top Clock", "Switch UK / Resort time", UI_SUCCESS},
+      {"Settings Gear", "Open Wi-Fi & Display options", UI_SUCCESS},
       {"Forecast Bar", "Cycle 24h & 16-day views", UI_ACCENT},
-      {"Countdown", "Toggle Resort local clock", TFT_CYAN},
+      {"Countdown", "Cycle Left / Resort / UK time", TFT_CYAN},
       {"Weather Bar", "Open Marine & Sky details", TFT_GOLD},
       {"Crab Screen", "Tap crab to hide, sky to wake", UI_DANGER}};
 
@@ -1062,7 +1032,7 @@ void showTouchHelpScreen()
     // Colored indicator dot on left
     tft.fillCircle(22, rowY + 8, 4, rows[i].badgeCol);
 
-    // Zone name (bold-ish white) + right-aligned or offset action description
+    // Zone name (bold-ish white) + offset action description
     tft.setTextDatum(TL_DATUM);
     tft.setTextColor(TFT_WHITE, UI_CARD);
     tft.drawString(rows[i].zone, 33, rowY, 2);
@@ -2959,6 +2929,7 @@ void loop()
       drawWeatherBadge();
     }
   }
+
   if (inScreenSaver)
   {
     if (freshTap)
@@ -3030,7 +3001,6 @@ void loop()
   // Top bar touch handling:
   // 1. Larger top-right gear icon zone (x >= 255, y <= 40) opens setup
   // 2. On your birthday, tapping the top bar replays the celebration
-  // 3. Otherwise, rest of top bar (x < 255, y <= 40) toggles UK / Destination time
   if (freshTap && !inScreenSaver && !inDimClockMode && !isWeatherPopupOpen && !isBirthdayPopupOpen && !isNotePopupOpen && ty <= 40)
   {
     if (tx >= 255)
@@ -3045,12 +3015,6 @@ void loop()
       triggerBirthdayCelebration(true);
       lastRenderedSec = 0;
       freshTap = false;
-    }
-    else if (hasDestUtcOffset)
-    {
-      showDestLocalTime = !showDestLocalTime;
-      tone(AZTOUCH_BEEPER, showDestLocalTime ? 1047 : 784, 45);
-      displayCurrentTimeSprite(rawlocal);
     }
   }
 
